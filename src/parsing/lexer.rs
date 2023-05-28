@@ -139,7 +139,10 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
     let operator_re = Regex::new(r"\+|-|\*|/|%|!|\|\||&&|==|<|<=|>|>=").unwrap();
     let whitespace_re = Regex::new(r"( |\t)+").unwrap();
-    let exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*;?(?: |\t|\n)*|;").unwrap();
+    // semicolon with new lines or whitespace around it
+    let explicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*;(?: |\t|\n)*|;(?: |\t|\n)*").unwrap();
+    // at least one new new line with whitespace around it
+    let implicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*").unwrap();
     let comment_re = Regex::new(r"#[^\n]*?").unwrap();
     
     // order: 
@@ -150,13 +153,15 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     // 5. operator
     // 6. keyword, prim types
     // 7. identifier
-    // 8. Newline
-    // 9. comment, whitespace etc
+    // 8. explicit exprsep
+    // 9. implicit exprsep
+    // 10. comment, whitespace etc
     let spl = input.lines().collect();
 
     while progress && pos != input.len() {
         progress = false;
         let file_pos = string_index_to_pos(&spl, pos);
+        let pos_temp = pos;
         // Try parsing all possible regexes, in order (highest priority first, then longest match)
 
         // Floats
@@ -262,11 +267,25 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             None => {}
         }
 
-        // Exprsep
-        match try_parse(&exprsep_re, input, pos) {
+        // Explicit exprsep
+        match try_parse(&explicit_exprsep_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::ExprSep, pos: file_pos });
+                // find pos of first semicolon
+                let inner_pos = val.find(";").unwrap();
+
+                ret.push(TokenPos { tk: Token::ExplicitExprSep, pos: string_index_to_pos(&spl, pos_temp + inner_pos) });
+                progress = true;
+                continue
+            }
+            None => {}
+        }
+
+        // Implicit exprsep
+        match try_parse(&implicit_exprsep_re, input, pos) {
+            Some(val) => {
+                pos += val.len();
+                ret.push(TokenPos { tk: Token::ImplicitExprSep, pos: file_pos });
                 progress = true;
                 continue
             }

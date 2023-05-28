@@ -17,6 +17,10 @@ pub struct Parser {
     tokens: VecDeque<TokenPos>
 }
 
+fn vecStrToString(v: Vec<&str>) -> Vec<String> {
+    v.into_iter().map(|s| s.to_string()).collect()
+}
+
 impl Parser {
 
     fn skip_keyword(&mut self, expected: &str, skip_exprsep: bool) -> Result<(String, Position), ParseError> {
@@ -47,7 +51,7 @@ impl Parser {
             self.skip_exprsep()
         }
 
-        let exp : Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
+        let exp : Vec<String> = vecStrToString(expected);
 
         let front = self.tokens.pop_front();
         match front {
@@ -215,7 +219,7 @@ impl Parser {
 
         match front {
             Some(tk) => match tk.tk {
-                ExprSep => {
+                ImplicitExprSep => {
                     self.consume(false);
                     self.skip_exprsep()
                 }
@@ -295,17 +299,29 @@ impl Parser {
                 // parse (; expr?)?
                 match self.peek_front(false) {
                     Some(tk) => match &tk.tk {
-                        ExprSep => {
+                        ExplicitExprSep => {
+                            let tk_pos = tk.pos;
                             self.consume(false);
 
                             match self.parse_maybe_expr()? {
                                 Some(second) => Ok(ExprPos {
-                                    expr: Sequence(Box::new(first), Some(Box::new(second))),
+                                    expr: Sequence(Box::new(first), Box::new(second)),
                                     pos: pos
                                 }),
                                 None => Ok(ExprPos {
-                                    expr: Sequence(Box::new(first), None),
+                                    expr: Sequence(Box::new(first), Box::new(ExprPos { expr: UnitLit, pos: tk_pos })),
                                     pos: pos})
+                            }
+                        }
+                        ImplicitExprSep => {
+                            self.consume(false);
+
+                            match self.parse_maybe_expr()? {
+                                Some(second) => Ok(ExprPos {
+                                    expr: Sequence(Box::new(first), Box::new(second)),
+                                    pos: pos
+                                }),
+                                None => Ok(first)
                             }
                         }
                         _ => Ok(first)
@@ -319,7 +335,10 @@ impl Parser {
 
     fn parse_maybe_expr(&mut self) -> Result<Option<ExprPos>, ParseError> {
         match self.peek_front(true) {
-            Some(_) => Ok(Some(self.parse_expr()?)),
+            Some(tk) => match &tk.tk {
+                Delimiter(d) if d == "}" || d == ")" || d == "]" => Ok(None),
+                _ => Ok(Some(self.parse_expr()?)),
+            }
             None => Ok(None)
         }
     }
@@ -386,8 +405,48 @@ impl Parser {
 
     fn parse_single_expr(&mut self) -> Result<ExprPos, ParseError> {
         // temporary
-        let id = self.skip_identifier(true)?;
-        Ok(ExprPos { expr: Variable(id.0), pos: id.1 })
+        let possible = vec!["if", "match", IDENT_STR, INT_LIT_STR, FLOAT_LIT_STR, BOOL_LIT_STR, STRING_LIT_STR, "{", "("];
+
+        let front = self.peek_front_strict(true)?;
+        
+        let pos = front.pos;
+
+        match &front.tk {
+            // Keyword(_) => todo!(),
+            Delimiter(d) if d == "{" => {
+                self.consume(true);
+                let expr = self.parse_expr()?;
+                self.skip_delimiter(vec!["}"], true)?;
+                Ok(ExprPos{ expr: Nested(Box::new(expr)), pos: pos })
+            }
+            Identifier(id) => {
+                let ret = Ok(ExprPos { expr: Variable(id.to_owned()), pos: pos });
+                self.consume(true);
+                ret
+            }
+            IntLiteral(val) => {
+                let ret = Ok(ExprPos { expr: IntLit(*val), pos: pos });
+                self.consume(true);
+                ret
+            }
+            FloatLiteral(val) => {
+                let ret = Ok(ExprPos { expr: FloatLit(*val), pos: pos });
+                self.consume(true);
+                ret
+            }
+            StringLiteral(val) => {
+                let ret = Ok(ExprPos { expr: StringLit(val.to_owned()), pos: pos });
+                self.consume(true);
+                ret
+            }
+            BoolLiteral(val) => {
+                let ret = Ok(ExprPos { expr: BoolLit(*val), pos: pos });
+                self.consume(true);
+                ret
+            }
+            // Operator(_) => todo!(),
+            _ => Err(ParseError::UnexpectedToken(front.to_str(), vecStrToString(possible), pos))
+        }
     }
     
 }

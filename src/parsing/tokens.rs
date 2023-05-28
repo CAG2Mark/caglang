@@ -34,7 +34,6 @@ pub enum KeywordType {
 
 pub enum Token {
     Keyword(String),
-    Primitive(String),
     Delimiter(String),
     Identifier(String),
     IntLiteral(i64),
@@ -45,7 +44,8 @@ pub enum Token {
     PrimType(String),
     Whitespace,
     Comment,
-    ExprSep
+    ImplicitExprSep,
+    ExplicitExprSep
 }
 
 pub struct TokenPos {
@@ -61,24 +61,25 @@ pub static STRING_LIT_STR: &str = "<String Literal>";
 pub static BOOL_LIT_STR: &str = "<Boolean Literal>";
 pub static WHITESPACE_STR: &str = "<Whitespace>";
 pub static COMMENT_STR: &str = "<Comment>";
-pub static EXPRSEP_STR: &str = "<Expression Separator>";
+pub static IMPLICIT_EXPRSEP_STR: &str = "<Implicit Expression Separator>";
+pub static EXPLICIT_EXPRSEP_STR: &str = ";";
 
 impl Token {
     pub fn to_str(&self) -> String {
         match self {
             Token::Keyword(kw) => kw.to_string(),
-            Token::Primitive(_) => PRIM_STR.to_string(),
             Token::Delimiter(d) => d.to_string(),
             Token::Identifier(_) => IDENT_STR.to_string(),
             Token::IntLiteral(_) => INT_LIT_STR.to_string(),
             Token::FloatLiteral(_) => FLOAT_LIT_STR.to_string(),
             Token::StringLiteral(_) => STRING_LIT_STR.to_string(),
             Token::Operator(op) => op.to_string(),
-            Token::PrimType(ty) => ty.to_string(),
+            Token::PrimType(_) => PRIM_STR.to_string(),
             Token::BoolLiteral(_) => BOOL_LIT_STR.to_string(),
             Token::Whitespace => WHITESPACE_STR.to_string(),
             Token::Comment => COMMENT_STR.to_string(),
-            Token::ExprSep => EXPRSEP_STR.to_string(),
+            Token::ImplicitExprSep => IMPLICIT_EXPRSEP_STR.to_string(),
+            Token::ExplicitExprSep => EXPLICIT_EXPRSEP_STR.to_string(),
             
         }
     }

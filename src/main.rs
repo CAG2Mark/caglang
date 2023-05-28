@@ -140,7 +140,7 @@ fn main() {
     let parsed = parser.parse();
 
     match parsed {
-        Ok(expr) => println!("{}", ast::format_tree(expr.expr)),
+        Ok(expr) => println!("{}", ast::format_tree(expr.expr, 0)),
         Err(error) => print_parse_error(&contents, error)
     }
 }
