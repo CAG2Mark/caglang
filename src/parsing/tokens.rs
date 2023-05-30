@@ -40,8 +40,10 @@ pub enum Token {
     FloatLiteral(f64),
     StringLiteral(String),
     BoolLiteral(bool),
+    AssignmentOperator(String),
     Operator(String),
     PrimType(String),
+    Equals,
     Whitespace,
     Comment,
     ImplicitExprSep,
@@ -73,14 +75,14 @@ impl Token {
             Token::IntLiteral(_) => INT_LIT_STR.to_string(),
             Token::FloatLiteral(_) => FLOAT_LIT_STR.to_string(),
             Token::StringLiteral(_) => STRING_LIT_STR.to_string(),
-            Token::Operator(op) => op.to_string(),
+            Token::Operator(op) | Token::AssignmentOperator(op) => op.to_string(),
+            Token::Equals => "=".to_string(),
             Token::PrimType(_) => PRIM_STR.to_string(),
             Token::BoolLiteral(_) => BOOL_LIT_STR.to_string(),
             Token::Whitespace => WHITESPACE_STR.to_string(),
             Token::Comment => COMMENT_STR.to_string(),
             Token::ImplicitExprSep => IMPLICIT_EXPRSEP_STR.to_string(),
-            Token::ExplicitExprSep => EXPLICIT_EXPRSEP_STR.to_string(),
-            
+            Token::ExplicitExprSep => EXPLICIT_EXPRSEP_STR.to_string()
         }
     }
 }

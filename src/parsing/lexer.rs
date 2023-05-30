@@ -99,25 +99,44 @@ fn int_lit_convert(val: String) -> i64 {
     }
 }
 
-fn string_lit_convert(val: String) -> String {
-    let mut cur = "".to_string();
-    let mut changed = val[1..val.len()-1].to_string();
+fn string_lit_convert(val: String) -> Result<String, usize> {
+    let mut ret = "".to_string();
+    let trimmed = val[1..val.len()-1].to_string();
     
-    let mut first = true;
-
-    while first || cur != changed {
-        first = false;
-        cur = changed;
-        changed = cur
-        // todo: fix...
-            .replacen("\\\\", "\\", 1)
-            .replacen("\\n", "\n", 1)
-            .replacen("\\t", "\t", 1)
-            .replacen("\\r", "\r", 1)
-            .replacen("\\\"", r#"\""#, 1)
+    if !trimmed.contains("\\") { // no need to unescape
+        return Ok(trimmed);
     }
-    
-    cur
+
+    let len = val.len() - 2;
+    let read : Vec<char> = trimmed.chars().collect();
+
+    let mut i = 0;
+    while i < len {
+        let ch = read[i];
+
+        if ch != '\\' {
+            ret.push(ch);
+            i += 1;
+            continue;
+        }
+
+        i += 1;
+
+        let next = read[i];
+
+        let push = match next {
+            '\\' => '\\',
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '"' => '\"',
+            _ => return Err(i + 1)
+        };
+
+        ret.push(push)
+    }
+
+    Ok(ret)
 }
 
 
@@ -128,34 +147,39 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
     let mut pos = 0;
     
-    let keyword_re = Regex::new(r"def|if|else|while|continue|break|match").unwrap();
+    let keyword_re = Regex::new(r"def|if|elif|else|while|continue|break|match").unwrap();
     // { } [ ] ( ) => = . , _ :
-    let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|=|\.|,|_|:").unwrap();
+    let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|\.|,|_|:").unwrap();
     let ident_re = Regex::new(r"[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
     let primitive_re = Regex::new(r"Int|Bool|String|Float|Unit").unwrap();
-    let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|-?\d+").unwrap();
+    let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+").unwrap();
     let bool_literal_re = Regex::new(r"true|false").unwrap();
     let float_literal_re = Regex::new(r"\d+(?:\.\d+f?|f)").unwrap();
     let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
-    let operator_re = Regex::new(r"\+|-|\*|/|%|!|\|\||&&|==|<|<=|>|>=").unwrap();
-    let whitespace_re = Regex::new(r"( |\t)+").unwrap();
+    let assignment_operator_re = Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=").unwrap();
+    let operator_re = Regex::new(r"\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=").unwrap();
+    let equals = Regex::new(r"=").unwrap();
+    // can "escape" away new lines using \
+    let whitespace_re = Regex::new(r"( |\t)+|\\( |\t)*\n( |\t)*").unwrap();
     // semicolon with new lines or whitespace around it
     let explicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*;(?: |\t|\n)*|;(?: |\t|\n)*").unwrap();
     // at least one new new line with whitespace around it
     let implicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*").unwrap();
-    let comment_re = Regex::new(r"#[^\n]*?").unwrap();
+    let comment_re = Regex::new(r"#[^\n]*").unwrap();
     
     // order: 
-    // 1. float literal
-    // 2. int, bool literal
-    // 3. string literal
-    // 4. delimiter
-    // 5. operator
-    // 6. keyword, prim types
-    // 7. identifier
-    // 8. explicit exprsep
-    // 9. implicit exprsep
-    // 10. comment, whitespace etc
+    //  float literal
+    //  int, bool literal
+    //  string literal
+    //  delimiter
+    //  assignment ops
+    //  operator
+    //  equals
+    //  keyword, prim types
+    //  identifier
+    //  explicit exprsep
+    //  implicit exprsep
+    // . comment, whitespace etc
     let spl = input.lines().collect();
 
     while progress && pos != input.len() {
@@ -205,9 +229,17 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             Some(val) => {
                 pos += val.len();
 
-                ret.push(TokenPos { tk: Token::StringLiteral(string_lit_convert(val)), pos: file_pos });
-                progress = true;
-                continue
+                match string_lit_convert(val) {
+                    Ok(s) => {
+                        ret.push(TokenPos { tk: Token::StringLiteral(s), pos: file_pos });
+                        progress = true;
+                        continue
+                    }
+                    Err(pos2) => { 
+                        return Err(string_index_to_pos(&spl, pos + pos2)) 
+                    }
+                }
+                
             }
             None => {}
         }
@@ -217,6 +249,17 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             Some(val) => {
                 pos += val.len();
                 ret.push(TokenPos { tk: Token::Delimiter(val), pos: file_pos });
+                progress = true;
+                continue
+            }
+            None => {}
+        }
+
+        // Assignment
+        match try_parse(&assignment_operator_re, input, pos) {
+            Some(val) => {
+                pos += val.len();
+                ret.push(TokenPos { tk: Token::AssignmentOperator(val), pos: file_pos });
                 progress = true;
                 continue
             }
@@ -233,6 +276,18 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             }
             None => {}
         }
+
+        // Equals
+        match try_parse(&equals, input, pos) {
+            Some(val) => {
+                pos += val.len();
+                ret.push(TokenPos { tk: Token::Equals, pos: file_pos });
+                progress = true;
+                continue
+            }
+            None => {}
+        }
+
 
         // Keywords
         match try_parse(&keyword_re, input, pos) {
@@ -308,7 +363,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&comment_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::Comment, pos: file_pos });
+                // ret.push(TokenPos { tk: Token::Comment, pos: file_pos });
                 progress = true;
                 continue
             }

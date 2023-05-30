@@ -6,10 +6,11 @@ use parsing::parser;
 use parsing::ast;
 
 use parsing::tokens::Position;
-use parsing::tokens::TokenPos;
 
 use std::io::prelude::*;
 use std::fs::File;
+
+use std::env;
 
 fn print_error_at(input: &String, severity: &str, pos: &Position, msg: &str) {
     let chunks: Vec<&str> = input.lines().collect();
@@ -73,7 +74,7 @@ fn print_parse_error(input: &String, error: parser::ParseError) {
 
     match error {
         parser::ParseError::UnexpectedToken(got, expected, pos) => {
-            let msg = format!("got {}, expected {}", got, expected_to_str(expected));
+            let msg = format!("unexpected token {}, possible token(s) contain {}", got, expected_to_str(expected));
             print_error_at(input, "fatal", &pos, &msg)
         }
         parser::ParseError::UnexpectedEOF(expected) => {
@@ -86,7 +87,7 @@ fn print_parse_error(input: &String, error: parser::ParseError) {
             }
             let pos = lexer::string_index_to_pos(&chunks, input.len() - 1);
             let pos_new = Position{line_no: pos.line_no, pos: pos.pos + 1};
-            let msg = format!("expected {}, got end of file", expected_to_str(expected));
+            let msg = format!("unexpected end of file, possible token(s) contain {}", expected_to_str(expected));
             print_error_at(input, "fatal", &pos_new, &msg)
         }
         parser::ParseError::UnexpectedEOFOther => {
@@ -118,12 +119,21 @@ fn file_to_string(file_name: &str) -> Option<String> {
 }
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    let file_name = match args.get(1) {
+        Some(s) => s,
+        None => {
+            println!("Error: File not provided.");
+            std::process::exit(1)
+        }
+    };
     
-    let read = file_to_string("examples/lextest.cg");
+    let read = file_to_string(file_name);
     let contents = match read {
         Some(contents) => contents,
         None => {
-            print!("Could not open file.");
+            println!("Could not open file.");
             std::process::exit(1)
         }
     }.trim_end().to_string();
@@ -140,7 +150,7 @@ fn main() {
     let parsed = parser.parse();
 
     match parsed {
-        Ok(expr) => println!("{}", ast::format_tree(expr.expr, 0)),
+        Ok(expr) => println!("{}", ast::format_tree(&expr.expr, 0, true)),
         Err(error) => print_parse_error(&contents, error)
     }
 }
