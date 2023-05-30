@@ -437,7 +437,7 @@ impl Parser {
         };
 
         let after = if single {
-            Some(ExprPos { expr: UnitLit, pos })
+            None
         } else {
             self.parse_after_exprsep()?
         };
@@ -453,10 +453,19 @@ impl Parser {
                     1 => ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos },
                     _ => unreachable!()
                 }
-                
             }
             None => {
-                e1
+                match mode {
+                    0 => ExprPos { expr: AssignmentOp(
+                        op_,
+                        Box::new(e1), 
+                        Box::new(body.unwrap(),),
+                        Box::new(
+                            ExprPos { expr: UnitLit, pos }
+                        )), pos },
+                    1 => e1,
+                    _ => unreachable!()
+                }
             }
         };
 
