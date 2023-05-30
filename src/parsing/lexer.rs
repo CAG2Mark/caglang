@@ -133,7 +133,8 @@ fn string_lit_convert(val: String) -> Result<String, usize> {
             _ => return Err(i + 1)
         };
 
-        ret.push(push)
+        ret.push(push);
+        i += 1;
     }
 
     Ok(ret)
