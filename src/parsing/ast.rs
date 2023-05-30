@@ -97,7 +97,7 @@ fn format_conds_expr(cond: &ExprPos, expr: &ExprPos, indent: u32, kw: &str) -> S
         e => format_tree(&e, indent + 1, true)
     };
 
-    format!("{kw} ({cond}) {{\n{body}\n{indents}}}").to_string()
+    format!("{kw} {cond} {{\n{body}\n{indents}}}").to_string()
 }
 
 pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {

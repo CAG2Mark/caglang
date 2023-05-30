@@ -801,9 +801,9 @@ impl Parser {
     // syntax: if (cond) singleExpr elif (cond) singleExpr .. else singleExpr 
     fn parse_ite_expr(&mut self) -> Result<ExprPos, ParseError> {
         let first = self.skip_keyword("if", true)?;
-        self.skip_delimiter(vec!["("], true)?;
-        let cond = self.parse_single_expr(true)?;
-        self.skip_delimiter(vec![")"], true)?;
+        // self.skip_delimiter(vec!["("], true)?;
+        let cond = self.parse_single_expr(false)?;
+        // self.skip_delimiter(vec![")"], true)?;
         let body = self.parse_sequence_or_assignment(false, true)?;
 
         Ok(
@@ -817,9 +817,9 @@ impl Parser {
 
     fn parse_while_expr(&mut self) -> Result<ExprPos, ParseError> {
         let first = self.skip_keyword("while", true)?;
-        self.skip_delimiter(vec!["("], true)?;
-        let cond = self.parse_single_expr(true)?;
-        self.skip_delimiter(vec![")"], true)?;
+        // self.skip_delimiter(vec!["("], true)?;
+        let cond = self.parse_single_expr(false)?;
+        // self.skip_delimiter(vec![")"], true)?;
         let body = self.parse_sequence_or_assignment(false, true)?;
 
         Ok(
@@ -841,9 +841,9 @@ impl Parser {
                 Some(tk) => match &tk.tk {
                     Keyword(d) if d == "elif" => {
                         self.consume(true);
-                        self.skip_delimiter(vec!["("], true)?;
-                        let cond = self.parse_single_expr(true)?;
-                        self.skip_delimiter(vec![")"], true)?;
+                        // self.skip_delimiter(vec!["("], true)?;
+                        let cond = self.parse_single_expr(false)?;
+                        // self.skip_delimiter(vec![")"], true)?;
                         let body = self.parse_sequence_or_assignment(false, true)?;
 
                         ret.push((Box::new(cond), Box::new(body)));
