@@ -187,8 +187,8 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     //  int, bool literal
     //  string literal
     //  delimiter
-    //  assignment ops
     //  operator
+    //  assignment ops
     //  equals
     //  keyword, prim types, identifier
     //  explicit exprsep
@@ -257,22 +257,22 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             None => {}
         }
 
-        // Assignment
-        match try_parse(&assignment_operator_re, input, pos) {
+        // Operators
+        match try_parse(&operator_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::AssignmentOperator(val), pos: file_pos });
+                ret.push(TokenPos { tk: Token::Operator(val), pos: file_pos });
                 progress = true;
                 continue
             }
             None => {}
         }
 
-        // Operators
-        match try_parse(&operator_re, input, pos) {
+        // Assignment
+        match try_parse(&assignment_operator_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::Operator(val), pos: file_pos });
+                ret.push(TokenPos { tk: Token::AssignmentOperator(val), pos: file_pos });
                 progress = true;
                 continue
             }
