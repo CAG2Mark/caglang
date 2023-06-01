@@ -100,7 +100,7 @@ impl Parser {
         let front = self.tokens.pop_front();
         match front {
             Some(tk) => match tk.tk {
-                Equals => {
+                AssignmentOperator(op) if op == "=" => {
                     Ok(tk.pos)
                 }
                 _ => Err(ParseError::UnexpectedToken(tk.to_str(), vec![expected.to_string()], tk.pos))
@@ -367,24 +367,9 @@ impl Parser {
                     None => Ok(e1)
                 }
             }
-            /* 
-            Identifier(_) => {
-                // Lookahead one more to see what the next token is.
-                // Not really the proper LL(1) way. But who cares :P
-                let second = self.lookahead(2, true);
-                match &second {
-                    Some(tk) => match &tk.tk {
-                        // let
-                        Equals => self.parse_let(),
-                        Delimiter(d) if d == ":" => self.parse_let(),
-                        AssignmentOperator(_) => self.parse_assignment_op(),
-                        _ => self.parse_sequence()
-                    } 
-                    _ =>  self.parse_sequence()
-
-                }
-            }
-            */
+            
+            Keyword(kw) if kw == "let" => self.parse_let(false),
+            
             _ => self.parse_sequence_or_assignment(false, false)
         }
     }
@@ -392,20 +377,6 @@ impl Parser {
     fn parse_sequence_or_assignment(&mut self, skip_exprsep: bool, single: bool) -> Result<ExprPos, ParseError> {
         let front = self.peek_front_strict(true)?;
         let mut pos = front.pos.to_owned();
-
-        match front.tk {
-            Identifier(_) => {
-                let second = self.lookahead(2, true);
-                match second {
-                    Some(tk) if matches!(tk.tk, Equals) => {
-                        return self.parse_let(single);
-                    }
-                    _ => ()
-                }
-            }
-            _ => ()
-        };
-        
 
         let e1 = self.parse_single_expr(skip_exprsep)?;
         
@@ -473,13 +444,15 @@ impl Parser {
     }
 
     fn parse_let(&mut self, single: bool) -> Result<ExprPos, ParseError> {
+        self.skip_keyword("let", true)?;
+        
         let id_pos = self.peek_front_strict(true)?.pos;
         let pd = self.parse_param_def()?;
 
         let equal_pos = self.skip_equals(true)?;
         let val = self.parse_single_expr(false)?;
         
-        let after = if (single) {
+        let after = if single {
             Some(ExprPos { expr: UnitLit, pos: id_pos })
         } else {
             self.parse_after_exprsep()?
@@ -558,7 +531,7 @@ impl Parser {
                 self.skip_equals(true)?;
                 Ok(ret)
             }
-            Equals => {
+            AssignmentOperator(op) if op == "=" => {
                 self.consume(true);
                 Ok(None)
             }

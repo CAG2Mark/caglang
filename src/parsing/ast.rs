@@ -46,7 +46,7 @@ pub enum Expr {
     UnitLit,
     Infix(String, Box<ExprPos>, Box<ExprPos>), // Op, left, right
     Prefix(String, Box<ExprPos>), // Op, expr
-    Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // x = first <ExprSep> second
+    Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
     AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>) // <assignment operator> lvalue rvalue <ExprSep> second
 }
 
@@ -162,7 +162,7 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
         Expr::Let(id, e1, e2) => {
             let first = format_tree(&e1.expr, indent, false);
             let second = format_tree(&e2.expr, indent, true);
-            format!("{}{} = {};\n{}", first_line_indents, format_param_df(id), first, second)
+            format!("{}let {} = {};\n{}", first_line_indents, format_param_df(id), first, second)
         }
         Expr::AssignmentOp(op, lval, e1, e2) => {
             let lval_ = format_tree(&lval.expr, indent, false);

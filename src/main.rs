@@ -12,12 +12,20 @@ use std::fs::File;
 
 use std::env;
 
+fn print_ln(chunks: &Vec<&str>, ln: usize) {
+    print!("{: <4}| {}\n", ln + 1, chunks.get(ln).unwrap());
+}
+
 fn print_error_at(input: &String, severity: &str, pos: &Position, msg: &str) {
     let chunks: Vec<&str> = input.lines().collect();
 
+    if pos.line_no > 0 {
+        print_ln(&chunks, pos.line_no - 1);
+    }
+
     match chunks.get(pos.line_no) {
-        Some(ln) => {
-            print!("{: <4}| {}\n", pos.line_no + 1, ln);
+        Some(_) => {
+            print_ln(&chunks, pos.line_no);
             print!("      ");
             // don't laugh ok :(
             for _ in 0..pos.pos {

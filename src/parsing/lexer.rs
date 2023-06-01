@@ -140,6 +140,22 @@ fn string_lit_convert(val: String) -> Result<String, usize> {
     Ok(ret)
 }
 
+const KEYWORDS: &'static [&'static str] = &["def", "if", "elif", "else", "while", "continue", "break", "match", "let"];
+const PRIMS: &'static [&'static str] = &["Int", "Bool", "String", "Float", "Unit"];
+const BOOL_LIT: &'static [&'static str] = &["true", "false"];
+
+pub fn handle_reserved(cand: &str) -> Token {
+    if KEYWORDS.contains(&cand) {
+        Token::Keyword(cand.to_string())
+    } else if PRIMS.contains(&cand) {
+        Token::PrimType(cand.to_string())
+    } else if BOOL_LIT.contains(&cand) {
+        Token::BoolLiteral(cand == "true")
+    } else {
+        Token::Identifier(cand.to_string())
+    }
+}
+
 
 pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let mut ret: Vec<TokenPos> = Vec::new();
@@ -148,18 +164,16 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
     let mut pos = 0;
     
-    let keyword_re = Regex::new(r"def|if|elif|else|while|continue|break|match").unwrap();
+    // let keyword_re = Regex::new(r"def|if|elif|else|while|continue|break|match").unwrap();
     // { } [ ] ( ) => = . , _ :
     let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|\.|,|_|:").unwrap();
     let ident_re = Regex::new(r"[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
-    let primitive_re = Regex::new(r"Int|Bool|String|Float|Unit").unwrap();
+    // let primitive_re = Regex::new(r"Int|Bool|String|Float|Unit").unwrap();
     let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+").unwrap();
-    let bool_literal_re = Regex::new(r"true|false").unwrap();
     let float_literal_re = Regex::new(r"\d+(?:\.\d+f?|f)").unwrap();
     let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
-    let assignment_operator_re = Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=").unwrap();
+    let assignment_operator_re = Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|=").unwrap();
     let operator_re = Regex::new(r"\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=").unwrap();
-    let equals = Regex::new(r"=").unwrap();
     // can "escape" away new lines using \
     let whitespace_re = Regex::new(r"( |\t)+|\\( |\t)*\n( |\t)*").unwrap();
     // semicolon with new lines or whitespace around it
@@ -176,8 +190,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     //  assignment ops
     //  operator
     //  equals
-    //  keyword, prim types
-    //  identifier
+    //  keyword, prim types, identifier
     //  explicit exprsep
     //  implicit exprsep
     // . comment, whitespace etc
@@ -207,18 +220,6 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 pos += val.len();
 
                 ret.push(TokenPos { tk: Token::IntLiteral(int_lit_convert(val)), pos: file_pos });
-                progress = true;
-                continue
-            }
-            None => {}
-        }
-
-        // Bools
-        match try_parse(&bool_literal_re, input, pos) {
-            Some(val) => {
-                pos += val.len();
-
-                ret.push(TokenPos { tk: Token::BoolLiteral(if val == "true" { true } else { false }), pos: file_pos });
                 progress = true;
                 continue
             }
@@ -278,45 +279,11 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             None => {}
         }
 
-        // Equals
-        match try_parse(&equals, input, pos) {
-            Some(val) => {
-                pos += val.len();
-                ret.push(TokenPos { tk: Token::Equals, pos: file_pos });
-                progress = true;
-                continue
-            }
-            None => {}
-        }
-
-
-        // Keywords
-        match try_parse(&keyword_re, input, pos) {
-            Some(val) => {
-                pos += val.len();
-                ret.push(TokenPos { tk: Token::Keyword(val), pos: file_pos });
-                progress = true;
-                continue
-            }
-            None => {}
-        }
-
-        // Prim types
-        match try_parse(&primitive_re, input, pos) {
-            Some(val) => {
-                pos += val.len();
-                ret.push(TokenPos { tk: Token::PrimType(val), pos: file_pos });
-                progress = true;
-                continue
-            }
-            None => {}
-        }
-
-        // Identifiers
+        // Identifiers, Keywords, Prim Types, Bool Literal
         match try_parse(&ident_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::Identifier(val), pos: file_pos });
+                ret.push(TokenPos { tk: handle_reserved(&val.to_string()), pos: file_pos });
                 progress = true;
                 continue
             }
