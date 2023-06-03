@@ -31,6 +31,33 @@ impl fmt::Display for QualifiedName {
     }
 }
 
+pub struct AdtVariant {
+    pub name: String,
+    pub params: Vec<ParamDef>
+}
+
+pub struct AdtDef {
+    pub name: String,
+    pub params: Vec<ParamDef>,
+    pub variants: Vec<AdtVariant>
+}
+
+
+
+pub enum Pattern {
+    WildcardPattern,
+    IdPattern(String),
+    IntLiteralPattern(i64),
+    FloatLiteralPattern(f64),
+    StringLiteralPattern(String),
+    AdtPattern(Vec<Pattern>)
+}
+
+pub struct MatchCase {
+    pat: Pattern,
+    body: ExprPos
+}
+
 pub enum Expr {
     Nested(Box<ExprPos>),
     FunDef(String, Option<Type>, Vec<ParamDef>, Box<ExprPos>),
@@ -38,6 +65,7 @@ pub enum Expr {
     Call(QualifiedName, Vec<ExprPos>),
     Sequence(Box<ExprPos>, Box<ExprPos>),
     Ite(Box<ExprPos>, Box<ExprPos>, Vec<(Box<ExprPos>, Box<ExprPos>)>, Option<Box<ExprPos>>), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
+    Match(Box<Expr>, Vec<MatchCase>), // scrutinee, matches
     While(Box<ExprPos>, Box<ExprPos>),
     IntLit(i64),
     FloatLit(f64),
@@ -47,7 +75,8 @@ pub enum Expr {
     Infix(String, Box<ExprPos>, Box<ExprPos>), // Op, left, right
     Prefix(String, Box<ExprPos>), // Op, expr
     Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
-    AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>) // <assignment operator> lvalue rvalue <ExprSep> second
+    AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
+    AdtDefn(AdtDef)
 }
 
 pub struct ExprPos {
@@ -78,7 +107,25 @@ pub fn format_sep(items: &Vec<String>, sep: &str) -> String {
 }
 
 pub fn format_param_dfs(p: &Vec<ParamDef>) -> String {
-    format_sep(&p.iter().map(|p| format_param_df(&p)).collect(), ", ")
+    let inner = format_sep(&p.iter().map(|p| format_param_df(&p)).collect(), ", ");
+    format!("({})", inner)
+}
+
+pub fn format_adt_variant(v: &AdtVariant, indent: u32) -> String {
+    let mut indents = "".to_string();
+    for _ in 0..indent {
+        indents = indents + "    ";
+    }
+    
+    let nme = v.name.to_string();
+    let params = format_param_dfs(&v.params);
+    format!("{indents}{nme}{params}")
+}
+
+pub fn format_adt_variants(v: &Vec<AdtVariant>, indent: u32) -> String {
+    format_sep(
+        &v.iter().map(|x| format_adt_variant(x, indent + 1)).collect(), ",\n"
+    )
 }
 
 pub fn format_exprs(p: &Vec<ExprPos>, indent: u32) -> String {
@@ -128,7 +175,7 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
                 other => other
             };
 
-            format!("{}def {}({}){} = {{\n{}\n{}}}",
+            format!("{}def {}{}{} = {{\n{}\n{}}}",
                 first_line_indents,
                 name,
                 format_param_dfs(&param_dfs),
@@ -187,6 +234,13 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
         Expr::Infix(op, left, right) => format!("{}({} {} {})", first_line_indents, 
             format_tree(&left.expr, indent+1, false), op, format_tree(&right.expr, indent+1, false)),
         Expr::Prefix(op, expr) => format!("{}({}{})", first_line_indents, op, format_tree(&expr.expr, indent + 1, false)),
+        Expr::AdtDefn(adt) => {
+            let nme = adt.name.to_string();
+            let params_formatted = format_param_dfs(&adt.params);
+            let variants = format_adt_variants(&adt.variants, indent);
+            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}}") 
+        }
+        Expr::Match(scrut, cases) => todo!()
     };
 
     ret

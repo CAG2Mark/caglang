@@ -367,6 +367,15 @@ impl Parser {
                     None => Ok(e1)
                 }
             }
+
+            Keyword(kw) if kw == "adt" => {
+                let e1 = self.parse_adt_def()?;
+                let rest = self.parse_after_exprsep()?;
+                match rest {
+                    Some(e2) => Ok(ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos }),
+                    None => Ok(e1)
+                }
+            }
             
             Keyword(kw) if kw == "let" => self.parse_let(false),
             
@@ -514,14 +523,97 @@ impl Parser {
         }
     }
 
+    fn parse_adt_def(&mut self) -> Result<ExprPos, ParseError> {
+        let first_pos = self.peek_front_strict(true)?.pos.to_owned();
+        
+        let first = self.skip_keyword("adt", true)?;
+        let id = self.skip_identifier(true)?;
+
+        let params = self.parse_paramlist()?; 
+        
+        let next_tk = self.peek_front(true);
+
+        // does not contain sum type
+        if !next_tk.is_some()
+            || !matches!(&next_tk.unwrap().tk, AssignmentOperator(op) if op == "=") {
+            return Ok(ExprPos {
+                expr: AdtDefn(AdtDef {
+                    name: id.0,
+                    params,
+                    variants: Vec::new()
+                }),
+                pos: first_pos
+            })
+        }
+
+        // otherwise, parse variants
+
+        self.skip_equals(true)?;
+
+        let front = self.peek_front_strict(true)?;
+
+        let variants = match &front.tk {
+            Delimiter(d) if d == "{" => {
+                self.consume(true);
+                let ret = self.parse_adt_variants()?;
+                self.skip_delimiter(vec!["}"], true)?;
+                ret
+            }
+            _ => {
+                self.parse_adt_variants()?
+            }
+        };
+
+        Ok(ExprPos {
+            expr: AdtDefn(AdtDef {
+                name: id.0,
+                params,
+                variants
+            }),
+            pos: first_pos
+        })
+
+
+    }
+
+    // parse adt variants, but not spaces around them
+    fn parse_adt_variants(&mut self) -> Result<Vec<AdtVariant>, ParseError> {
+        let mut ret: Vec<AdtVariant> = Vec::new();
+        match self.peek_front_strict(true)?.tk {
+            Identifier(_) => {
+                let mut cond = true;
+
+                while cond {
+                    ret.push(self.parse_adt_variant()?);
+                    let next = self.peek_front(true);
+                    cond = next.is_some() && matches!(&next.unwrap().tk, Delimiter(d) if d == ",");
+                    if cond {
+                        self.consume(true)
+                    }
+                }
+
+                Ok(ret)
+            }
+            _ => {
+                Ok(ret)
+            }
+        }
+    }
+
+    fn parse_adt_variant(&mut self) -> Result<AdtVariant, ParseError> {
+        let id = self.skip_identifier(true)?;
+        let params = self.parse_paramlist()?;
+        Ok(AdtVariant {
+            name: id.0,
+            params
+        })
+    }
+
     fn parse_fn_def(&mut self) -> Result<ExprPos, ParseError> {
         let first = self.skip_keyword("def", true)?;
         let id = self.skip_identifier(true)?;
-        self.skip_delimiter(vec!["("], true)?;
 
-        let params = self.parse_fn_params()?; 
-
-        self.skip_delimiter(vec![")"], true)?;
+        let params = self.parse_paramlist()?; 
 
         let next = self.peek_front_strict(true)?;
         let ty : Option<Type> = match &next.tk {
@@ -543,7 +635,18 @@ impl Parser {
         Ok(ExprPos { expr: Expr::FunDef(id.0, ty, params, Box::new(body)), pos: first.1 })
     }
 
-    fn parse_fn_params(&mut self) -> Result<Vec<ParamDef>, ParseError> {
+    fn parse_paramlist(&mut self) -> Result<Vec<ParamDef>, ParseError> {
+        let front = self.peek_front(true);
+
+        if !matches!(
+            front,
+            Some(tk) if matches!(&tk.tk, Delimiter(d) if d == "(")
+        ) {
+            return Ok(Vec::new());
+        }
+
+        self.skip_delimiter(vec!["("], true)?;
+
         let mut ret: Vec<ParamDef> = Vec::new();
         match self.peek_front_strict(true)?.tk {
             Identifier(_) => {
@@ -558,9 +661,14 @@ impl Parser {
                     }
                 }
 
+                self.skip_delimiter(vec![")"], true)?;
+
                 Ok(ret)
             }
-            _ => Ok(ret)
+            _ => {
+                self.skip_delimiter(vec![")"], true)?;
+                Ok(ret)
+            }
         }
     }
 

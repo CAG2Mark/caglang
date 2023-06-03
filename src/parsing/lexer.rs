@@ -140,9 +140,11 @@ fn string_lit_convert(val: String) -> Result<String, usize> {
     Ok(ret)
 }
 
-const KEYWORDS: &'static [&'static str] = &["def", "if", "elif", "else", "while", "continue", "break", "match", "let"];
+const KEYWORDS: &'static [&'static str] = &["def", "if", "elif", "else", "while", "continue", "break", "match", "let", "adt"];
 const PRIMS: &'static [&'static str] = &["Int", "Bool", "String", "Float", "Unit"];
 const BOOL_LIT: &'static [&'static str] = &["true", "false"];
+const OPERATORS: &'static [&'static str] = &["+","-","*","/","%","!","!=","||","&&","==","<","<=",">",">="];
+const ASSIGNMENT_OPS: &'static [&'static str] = &["+=", "-=", "*=", "/=", "%=", "||=", "&&=", "="];
 
 pub fn handle_reserved(cand: &str) -> Token {
     if KEYWORDS.contains(&cand) {
@@ -172,8 +174,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+").unwrap();
     let float_literal_re = Regex::new(r"\d+(?:\.\d+f?|f)").unwrap();
     let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
-    let assignment_operator_re = Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|=").unwrap();
-    let operator_re = Regex::new(r"\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=").unwrap();
+    let operator_re = Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=|=").unwrap();
     // can "escape" away new lines using \
     let whitespace_re = Regex::new(r"( |\t)+|\\( |\t)*\n( |\t)*").unwrap();
     // semicolon with new lines or whitespace around it
@@ -261,24 +262,19 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&operator_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::Operator(val), pos: file_pos });
+
+                let tk = if OPERATORS.contains(&val.as_str()) {
+                    Token::Operator(val)
+                } else {
+                    Token::AssignmentOperator(val)
+                };
+
+                ret.push(TokenPos { tk, pos: file_pos });
                 progress = true;
                 continue
             }
             None => {}
         }
-
-        // Assignment
-        match try_parse(&assignment_operator_re, input, pos) {
-            Some(val) => {
-                pos += val.len();
-                ret.push(TokenPos { tk: Token::AssignmentOperator(val), pos: file_pos });
-                progress = true;
-                continue
-            }
-            None => {}
-        }
-
         // Identifiers, Keywords, Prim Types, Bool Literal
         match try_parse(&ident_re, input, pos) {
             Some(val) => {
