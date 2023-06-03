@@ -4,6 +4,7 @@ use crate::tokens::*;
 use crate::tokens::Token::*;
 use crate::ast::*;
 use crate::ast::Expr::*;
+use crate::ast::Pattern::*;
 use crate::parsing::pratt_parser::pratt_parse;
 
 pub enum ParseError {
@@ -742,6 +743,7 @@ impl Parser {
         match &front.tk {
             Keyword(kw) if kw == "if" => self.parse_ite_expr(),
             Keyword(kw) if kw == "while" => self.parse_while_expr(),
+            Keyword(kw) if kw == "match" => self.parse_match_expr(),
             Operator(op) if op == "!" || op == "-" => {
                 let op_ = op.to_owned();
                 self.consume(true);
@@ -952,6 +954,146 @@ impl Parser {
                 _ => Ok(None)
             }
             None => Ok(None)
+        }
+    }
+
+    fn parse_match_expr(&mut self) -> Result<ExprPos, ParseError> {
+        let first_pos = self.peek_front_strict(true)?.pos.to_owned();
+        self.skip_keyword("match", true)?;
+
+        let scrut = self.parse_single_expr(true)?;
+
+        self.skip_delimiter(vec!["{"], true)?;
+
+        let match_cases = self.parse_matchcases()?;
+
+        self.skip_delimiter(vec!["}"], true)?;
+
+        Ok(ExprPos {
+            expr: Match(Box::new(scrut), match_cases),
+            pos: first_pos
+        })
+    }
+
+    fn parse_matchcases(&mut self) -> Result<Vec<MatchCase>, ParseError> {
+        let mut ret: Vec<MatchCase> = Vec::new();
+        let mut cond = true;
+
+        while cond {
+            ret.push(self.parse_matchcase()?);
+            
+            let next = self.peek_front_strict(true)?;
+            cond = !matches!(&next.tk, Delimiter(d) if d == "}");
+        }
+
+        Ok(ret)
+    }
+
+    fn parse_matchcase(&mut self) -> Result<MatchCase, ParseError> {
+        let pattern = self.parse_pattern()?;
+        self.skip_delimiter(vec!["=>"], true)?;
+        let body = self.parse_single_expr(false)?;
+
+        Ok(MatchCase {
+            pat: pattern,
+            body
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+        let front = self.peek_front_strict(true)?;
+        let pos = front.pos.to_owned();
+
+        let expected = vec![
+            "_".to_string(),
+            IDENT_STR.to_string(),
+            INT_LIT_STR.to_string(),
+            FLOAT_LIT_STR.to_string(),
+            STRING_LIT_STR.to_string(),
+            BOOL_LIT_STR.to_string()
+        ];
+
+        match &front.tk {
+            Delimiter(d) if d == "_" => {
+                self.consume(true);
+                Ok(WildcardPattern)
+            }
+            Identifier(id) => self.parse_id_pattern(),
+            IntLiteral(val) => {
+                let ret = Ok(IntLiteralPattern(*val));
+                self.consume(true);
+                ret
+            } 
+            FloatLiteral(val) => {
+                let ret = Ok(FloatLiteralPattern(*val));
+                self.consume(true);
+                ret
+            } 
+            StringLiteral(val) => {
+                let ret = Ok(StringLiteralPattern(val.to_string()));
+                self.consume(true);
+                ret
+            } 
+            BoolLiteral(val) => {
+                let ret = Ok(BoolLiteralPattern(*val));
+                self.consume(true);
+                ret
+            } 
+            _ => Err(
+                ParseError::UnexpectedToken(front.tk.to_str(), expected, pos)
+            )
+        }
+    }
+
+    fn parse_id_pattern(&mut self) -> Result<Pattern, ParseError> {
+        let qn = self.parse_qualified_name()?;
+
+        let next = self.peek_front_strict(true)?;
+        
+        // Something => ...
+        if qn.nexts.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
+            return Ok(IdOrAdtPattern(qn.first))
+        }
+
+        let params = self.parse_patterns()?;
+
+        Ok(AdtPattern(qn, params))
+    }
+
+    fn parse_patterns(&mut self) -> Result<Vec<Pattern>, ParseError> {
+        let front = self.peek_front(true);
+
+        if !matches!(
+            front,
+            Some(tk) if matches!(&tk.tk, Delimiter(d) if d == "(")
+        ) {
+            return Ok(Vec::new());
+        }
+
+        self.skip_delimiter(vec!["("], true)?;
+
+        let mut ret: Vec<Pattern> = Vec::new();
+        match &self.peek_front_strict(true)?.tk {
+            Delimiter(d) if d == ")" => {
+                self.consume(true);
+                Ok(ret)
+            }
+            _ => {
+                let mut cond = true;
+
+                while cond {
+                    ret.push(self.parse_pattern()?);
+                    let next = self.peek_front_strict(true)?;
+                    cond = matches!(&next.tk, Delimiter(d) if d == ",");
+                    if cond {
+                        self.consume(true)
+                    }
+                }
+
+                self.skip_delimiter(vec![")"], true)?;
+
+                Ok(ret)
+            }
         }
     }
 }

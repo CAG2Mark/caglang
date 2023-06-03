@@ -46,16 +46,17 @@ pub struct AdtDef {
 
 pub enum Pattern {
     WildcardPattern,
-    IdPattern(String),
+    IdOrAdtPattern(String), // cannot distinguish between IDs and ADT variants with no parameters
     IntLiteralPattern(i64),
     FloatLiteralPattern(f64),
     StringLiteralPattern(String),
-    AdtPattern(Vec<Pattern>)
+    BoolLiteralPattern(bool),
+    AdtPattern(QualifiedName, Vec<Pattern>)
 }
 
 pub struct MatchCase {
-    pat: Pattern,
-    body: ExprPos
+    pub pat: Pattern,
+    pub body: ExprPos
 }
 
 pub enum Expr {
@@ -65,7 +66,7 @@ pub enum Expr {
     Call(QualifiedName, Vec<ExprPos>),
     Sequence(Box<ExprPos>, Box<ExprPos>),
     Ite(Box<ExprPos>, Box<ExprPos>, Vec<(Box<ExprPos>, Box<ExprPos>)>, Option<Box<ExprPos>>), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
-    Match(Box<Expr>, Vec<MatchCase>), // scrutinee, matches
+    Match(Box<ExprPos>, Vec<MatchCase>), // scrutinee, matches
     While(Box<ExprPos>, Box<ExprPos>),
     IntLit(i64),
     FloatLit(f64),
@@ -109,6 +110,46 @@ pub fn format_sep(items: &Vec<String>, sep: &str) -> String {
 pub fn format_param_dfs(p: &Vec<ParamDef>) -> String {
     let inner = format_sep(&p.iter().map(|p| format_param_df(&p)).collect(), ", ");
     format!("({})", inner)
+}
+
+pub fn format_patterns(p: &Vec<Pattern>) -> String {
+    let inner = format_sep(
+        &p.iter().map(|x| format_pattern(x)).collect(), ", "
+    );
+    format!("({inner})")
+} 
+
+pub fn format_pattern(v: &Pattern) -> String {
+    match v {
+        Pattern::WildcardPattern => "_".to_string(),
+        Pattern::IdOrAdtPattern(id) => id.to_string(),
+        Pattern::IntLiteralPattern(val) => val.to_string(),
+        Pattern::FloatLiteralPattern(val) => val.to_string(),
+        Pattern::StringLiteralPattern(val) => val.to_string(),
+        Pattern::BoolLiteralPattern(val) => val.to_string(),
+        Pattern::AdtPattern(qn, cases) => {
+            let cases_str = format_patterns(&cases);
+            format!("{qn}{cases_str}")
+        } 
+    }
+}
+
+pub fn format_matchcase(v: &MatchCase, indent: u32) -> String {
+    let mut indents = "".to_string();
+    for _ in 0..indent {
+        indents = indents + "    ";
+    }
+
+    let pat_str = format_pattern(&v.pat);
+    let body_str = format_tree(&v.body.expr, indent, false);
+    
+    format!("{indents}{pat_str} => {body_str}")
+}
+
+pub fn format_matchcases(v: &Vec<MatchCase>, indent: u32) -> String {
+    format_sep(
+        &v.iter().map(|x| format_matchcase(x, indent)).collect(), "\n"
+    )
 }
 
 pub fn format_adt_variant(v: &AdtVariant, indent: u32) -> String {
@@ -240,7 +281,11 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
             let variants = format_adt_variants(&adt.variants, indent);
             format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}}") 
         }
-        Expr::Match(scrut, cases) => todo!()
+        Expr::Match(scrut, cases) => {
+            let scrut_str = format_tree(&scrut.expr, indent + 1, false);
+            let cases_str = format_matchcases(cases, indent + 1);
+            format!("{first_line_indents}match {scrut_str} {{\n{cases_str}\n{indents}}}") 
+        }
     };
 
     ret
