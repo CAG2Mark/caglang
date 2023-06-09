@@ -3,6 +3,8 @@ use Vec;
 
 use crate::tokens::*;
 
+use crate::parsing::position::*;
+
 fn try_parse(regex: &Regex, input: &String, pos: usize) -> Option<String> {
     match regex.captures_at(input, pos) {
         Some(captures) => {
@@ -146,11 +148,22 @@ const BOOL_LIT: &'static [&'static str] = &["true", "false"];
 const OPERATORS: &'static [&'static str] = &["+","-","*","/","%","!","!=","||","&&","==","<","<=",">",">="];
 const ASSIGNMENT_OPS: &'static [&'static str] = &["+=", "-=", "*=", "/=", "%=", "||=", "&&=", "="];
 
+pub fn prim_str_to_type(cand: &str) -> Prim {
+    match cand {
+        "Int" => Prim::Int,
+        "Bool" => Prim::Bool,
+        "Float" => Prim::Float,
+        "String" => Prim::String,
+        "Unit" => Prim::Unit,
+        _ => unreachable!()
+    }
+}
+
 pub fn handle_reserved(cand: &str) -> Token {
     if KEYWORDS.contains(&cand) {
         Token::Keyword(cand.to_string())
     } else if PRIMS.contains(&cand) {
-        Token::PrimType(cand.to_string())
+        Token::PrimType(prim_str_to_type(cand))
     } else if BOOL_LIT.contains(&cand) {
         Token::BoolLiteral(cand == "true")
     } else {
@@ -207,8 +220,10 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&float_literal_re, input, pos) {
             Some(val) => {
                 pos += val.len();
+
+                let p2 = string_index_to_pos(&spl, pos - 1);
                 
-                ret.push(TokenPos { tk: Token::FloatLiteral(float_lit_convert(val)), pos: file_pos });
+                ret.push(TokenPos { tk: Token::FloatLiteral(float_lit_convert(val)), pos: union_pos(file_pos, p2) });
                 progress = true;
                 continue
             }
@@ -220,7 +235,9 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             Some(val) => {
                 pos += val.len();
 
-                ret.push(TokenPos { tk: Token::IntLiteral(int_lit_convert(val)), pos: file_pos });
+                let p2 = string_index_to_pos(&spl, pos - 1);
+
+                ret.push(TokenPos { tk: Token::IntLiteral(int_lit_convert(val)), pos: union_pos(file_pos, p2) });
                 progress = true;
                 continue
             }
@@ -232,9 +249,11 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             Some(val) => {
                 pos += val.len();
 
+                let p2 = string_index_to_pos(&spl, pos - 1);
+
                 match string_lit_convert(val) {
                     Ok(s) => {
-                        ret.push(TokenPos { tk: Token::StringLiteral(s), pos: file_pos });
+                        ret.push(TokenPos { tk: Token::StringLiteral(s), pos: union_pos(file_pos, p2) });
                         progress = true;
                         continue
                     }
@@ -251,7 +270,9 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&delimiter_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::Delimiter(val), pos: file_pos });
+                let p2 = string_index_to_pos(&spl, pos - 1);
+
+                ret.push(TokenPos { tk: Token::Delimiter(val), pos: union_pos(file_pos, p2) });
                 progress = true;
                 continue
             }
@@ -262,6 +283,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&operator_re, input, pos) {
             Some(val) => {
                 pos += val.len();
+                let p2 = string_index_to_pos(&spl, pos - 1);
 
                 let tk = if OPERATORS.contains(&val.as_str()) {
                     Token::Operator(val)
@@ -269,7 +291,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                     Token::AssignmentOperator(val)
                 };
 
-                ret.push(TokenPos { tk, pos: file_pos });
+                ret.push(TokenPos { tk, pos: union_pos(file_pos, p2) });
                 progress = true;
                 continue
             }
@@ -279,7 +301,9 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&ident_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: handle_reserved(&val.to_string()), pos: file_pos });
+                let p2 = string_index_to_pos(&spl, pos - 1);
+
+                ret.push(TokenPos { tk: handle_reserved(&val.to_string()), pos: union_pos(file_pos, p2) });
                 progress = true;
                 continue
             }
@@ -290,10 +314,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&explicit_exprsep_re, input, pos) {
             Some(val) => {
                 pos += val.len();
+
                 // find pos of first semicolon
                 let inner_pos = val.find(";").unwrap();
+                let pos = string_index_to_pos(&spl, pos_temp + inner_pos);
 
-                ret.push(TokenPos { tk: Token::ExplicitExprSep, pos: string_index_to_pos(&spl, pos_temp + inner_pos) });
+                ret.push(TokenPos { tk: Token::ExplicitExprSep, pos: union_pos(pos, pos)});
                 progress = true;
                 continue
             }
@@ -304,7 +330,8 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&implicit_exprsep_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                ret.push(TokenPos { tk: Token::ImplicitExprSep, pos: file_pos });
+
+                ret.push(TokenPos { tk: Token::ImplicitExprSep, pos: union_pos(file_pos, file_pos) });
                 progress = true;
                 continue
             }
@@ -315,6 +342,8 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&whitespace_re, input, pos) {
             Some(val) => {
                 pos += val.len();
+                let p2 = string_index_to_pos(&spl, pos - 1);
+
                 // ignore whitespace.
                 // ret.push(TokenPos { tk: Token::Whitespace, pos: file_pos });
                 progress = true;
@@ -327,6 +356,8 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&comment_re, input, pos) {
             Some(val) => {
                 pos += val.len();
+                let p2 = string_index_to_pos(&spl, pos - 1);
+
                 // ret.push(TokenPos { tk: Token::Comment, pos: file_pos });
                 progress = true;
                 continue

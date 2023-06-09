@@ -1,21 +1,15 @@
-use crate::tokens::Position;
+use crate::parsing::position::*;
 use std::fmt;
-
-pub enum Type {
-    Primitve(String)
-}
+use crate::parsing::tokens::Prim;
 
 // All WIP.
 
 pub struct ParamDef {
     pub name: String, 
     pub ty: Option<Type>, 
-    pub pos: Position
+    pub pos: PositionRange
 }
 
-pub enum Tree {
-    
-}
 
 pub struct QualifiedName {
     pub first: String,
@@ -29,6 +23,27 @@ impl fmt::Display for QualifiedName {
             |a, b| a + "." + b
         ))
     }
+}
+
+pub enum Type {
+    Primitve(Prim),
+    UserType(QualifiedName)
+}
+
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Type::Primitve(t) => write!(f, "{}", t),
+            Type::UserType(t) => write!(f, "{}", t)
+        }
+    }
+}
+
+pub struct FunDef {
+    pub name: String, 
+    pub ty: Option<Type>, 
+    pub params: Vec<ParamDef>, 
+    pub body: Box<ExprPos>
 }
 
 pub struct AdtVariant {
@@ -61,7 +76,7 @@ pub struct MatchCase {
 
 pub enum Expr {
     Nested(Box<ExprPos>),
-    FunDef(String, Option<Type>, Vec<ParamDef>, Box<ExprPos>),
+    FunDefn(FunDef, Box<ExprPos>), // id, ret type, params, body, after
     Variable(QualifiedName),
     Call(QualifiedName, Vec<ExprPos>),
     Sequence(Box<ExprPos>, Box<ExprPos>),
@@ -77,17 +92,17 @@ pub enum Expr {
     Prefix(String, Box<ExprPos>), // Op, expr
     Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
     AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
-    AdtDefn(AdtDef)
+    AdtDefn(AdtDef, Box<ExprPos>) // // adtdef, after
 }
 
 pub struct ExprPos {
     pub expr: Expr,
-    pub pos: Position
+    pub pos: PositionRange
 }
 
 pub fn format_param_df(p: &ParamDef) -> String {
     match &p.ty {
-        Some(Type::Primitve(t)) => format!("{}: {}", p.name, t),
+        Some(t) => format!("{}: {}", p.name, t),
         None => p.name.to_owned()
     }
 }
@@ -205,24 +220,26 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
                 _ => format!("{}{{\n{}\n{}}}", first_line_indents, format_tree(&expr.expr, indent + 1, true), indents)
             }
         }
-        Expr::FunDef(name, ty, param_dfs, body) => {
-            let type_str = match ty {
-                Some(Type::Primitve(t)) => format!(" : {}", t),
+        Expr::FunDefn(df, after) => {
+            let type_str = match &df.ty {
+                Some(t) => format!("{}", t),
                 None => "".to_string(),
             };
 
-            let body_inner = match &body.expr {
+            let body_inner = match &df.body.expr {
                 Expr::Nested(expr) => &expr.expr,
                 other => other
             };
 
-            format!("{}def {}{}{} = {{\n{}\n{}}}",
+            format!("{}def {}{}{} = {{\n{}\n{}}};\n{}{}",
                 first_line_indents,
-                name,
-                format_param_dfs(&param_dfs),
+                df.name,
+                format_param_dfs(&df.params),
                 type_str,
                 format_tree(&body_inner, indent + 1, true),
                 indents,
+                indents,
+                format_tree(&after.expr, indent, true)
             )
         },
         Expr::Ite(cond1, expr1, more, elze) => {
@@ -275,11 +292,13 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
         Expr::Infix(op, left, right) => format!("{}({} {} {})", first_line_indents, 
             format_tree(&left.expr, indent+1, false), op, format_tree(&right.expr, indent+1, false)),
         Expr::Prefix(op, expr) => format!("{}({}{})", first_line_indents, op, format_tree(&expr.expr, indent + 1, false)),
-        Expr::AdtDefn(adt) => {
+        Expr::AdtDefn(adt, after) => {
             let nme = adt.name.to_string();
             let params_formatted = format_param_dfs(&adt.params);
             let variants = format_adt_variants(&adt.variants, indent);
-            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}}") 
+            let after = format_tree(&after.expr, indent, true);
+
+            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}};\n{indents}{after}") 
         }
         Expr::Match(scrut, cases) => {
             let scrut_str = format_tree(&scrut.expr, indent + 1, false);

@@ -1,8 +1,5 @@
-#[derive(Copy, Clone)]
-pub struct Position {
-    pub line_no: usize,
-    pub pos: usize
-}
+use crate::parsing::position::*;
+use std::fmt;
 
 /*
 pub enum DelimiterType {
@@ -32,6 +29,27 @@ pub enum KeywordType {
 }
 */
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Prim {
+    Int,
+    Float,
+    String,
+    Bool,
+    Unit
+}
+
+impl fmt::Display for Prim {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Prim::Int => write!(f, "Int"),
+            Prim::Float => write!(f, "Float"),
+            Prim::String => write!(f, "String"),
+            Prim::Bool => write!(f, "Bool"),
+            Prim::Unit => write!(f, "Unit"),
+        }
+    }
+}
+
 pub enum Token {
     Keyword(String),
     Delimiter(String),
@@ -42,7 +60,7 @@ pub enum Token {
     BoolLiteral(bool),
     AssignmentOperator(String),
     Operator(String),
-    PrimType(String),
+    PrimType(Prim),
     Whitespace,
     Comment,
     ImplicitExprSep,
@@ -51,7 +69,7 @@ pub enum Token {
 
 pub struct TokenPos {
     pub tk: Token,
-    pub pos: Position
+    pub pos: PositionRange
 }
 
 pub static IDENT_STR: &str = "<Identifier>";

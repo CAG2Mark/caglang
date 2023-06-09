@@ -6,16 +6,18 @@ use crate::ast::*;
 use crate::ast::Expr::*;
 use crate::ast::Pattern::*;
 use crate::parsing::pratt_parser::pratt_parse;
+use crate::parsing::position::*;
 
 pub enum ParseError {
-    UnexpectedToken(String, Vec<String>, Position), // got, expected, pos
-    Unfinished(String, Position), // got, pos
+    UnexpectedToken(String, Vec<String>, PositionRange), // got, expected, pos
+    Unfinished(String, PositionRange), // got, pos
     UnexpectedEOF(Vec<String>), // expected
     UnexpectedEOFOther // expected
 }
 
 pub struct Parser {
-    tokens: VecDeque<TokenPos>
+    tokens: VecDeque<TokenPos>,
+    last_tk_pos: PositionRange
 }
 
 fn vec_str_to_string(v: Vec<&str>) -> Vec<String> {
@@ -24,12 +26,9 @@ fn vec_str_to_string(v: Vec<&str>) -> Vec<String> {
 
 impl Parser {
 
-    fn skip_keyword(&mut self, expected: &str, skip_exprsep: bool) -> Result<(String, Position), ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
+    fn skip_keyword(&mut self, expected: &str, skip_exprsep: bool) -> Result<(String, PositionRange), ParseError> {
+        let front = self.consume_maybe(skip_exprsep);
 
-        let front = self.tokens.pop_front();
         match front {
             Some(tk) => match tk.tk {
                 Keyword(got) => {
@@ -47,14 +46,10 @@ impl Parser {
         }
     }
 
-    fn skip_delimiter(&mut self, expected: Vec<&str>, skip_exprsep: bool) -> Result<(String, Position), ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
+    fn skip_delimiter(&mut self, expected: Vec<&str>, skip_exprsep: bool) -> Result<(String, PositionRange), ParseError> {
         let exp : Vec<String> = vec_str_to_string(expected);
 
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 Delimiter(got) => {
@@ -72,13 +67,10 @@ impl Parser {
         }
     }
 
-    fn skip_identifier(&mut self, skip_exprsep: bool) -> Result<(String, Position), ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
+    fn skip_identifier(&mut self, skip_exprsep: bool) -> Result<(String, PositionRange), ParseError> {
         let expected = IDENT_STR;
-        let front = self.tokens.pop_front();
+
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 Identifier(nme) => {
@@ -92,13 +84,9 @@ impl Parser {
         }
     }
 
-    fn skip_equals(&mut self, skip_exprsep: bool) -> Result<Position, ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
+    fn skip_equals(&mut self, skip_exprsep: bool) -> Result<PositionRange, ParseError> {
         let expected = "=".to_string();
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 AssignmentOperator(op) if op == "=" => {
@@ -112,13 +100,9 @@ impl Parser {
         }
     }
 
-    fn skip_prim_type(&mut self, skip_exprsep: bool) -> Result<(Type, Position), ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
+    fn skip_prim_type(&mut self, skip_exprsep: bool) -> Result<(Type, PositionRange), ParseError> {
         let expected = PRIM_STR;
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 PrimType(nme) => {
@@ -133,12 +117,8 @@ impl Parser {
     }
 
     fn skip_int_literal(&mut self, skip_exprsep: bool) -> Result<TokenPos, ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
         let expected = INT_LIT_STR;
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 IntLiteral(_) => {
@@ -153,12 +133,8 @@ impl Parser {
     }
 
     fn skip_float_literal(&mut self, skip_exprsep: bool) -> Result<TokenPos, ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
         let expected = FLOAT_LIT_STR;
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 FloatLiteral(_) => {
@@ -173,12 +149,8 @@ impl Parser {
     }
 
     fn skip_string_literal(&mut self, skip_exprsep: bool) -> Result<TokenPos, ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
         let expected = STRING_LIT_STR;
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 StringLiteral(_) => {
@@ -193,12 +165,8 @@ impl Parser {
     }
 
     fn skip_bool_literal(&mut self, skip_exprsep: bool) -> Result<TokenPos, ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
         let expected = BOOL_LIT_STR;
-        let front = self.tokens.pop_front();
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 BoolLiteral(_) => {
@@ -212,12 +180,8 @@ impl Parser {
         }
     }
 
-    fn skip_operator(&mut self, expected: &str, skip_exprsep: bool) -> Result<(String, Position), ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
-        let front = self.tokens.pop_front();
+    fn skip_operator(&mut self, expected: &str, skip_exprsep: bool) -> Result<(String, PositionRange), ParseError> {
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 Operator(got) => {
@@ -235,12 +199,8 @@ impl Parser {
         }
     }
 
-    fn skip_assignment_operator(&mut self, skip_exprsep: bool) -> Result<(String, Position), ParseError> {
-        if skip_exprsep {
-            self.skip_exprsep()
-        }
-
-        let front = self.tokens.pop_front();
+    fn skip_assignment_operator(&mut self, skip_exprsep: bool) -> Result<(String, PositionRange), ParseError> {
+        let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
                 AssignmentOperator(got) => {
@@ -326,12 +286,30 @@ impl Parser {
         }
     }
 
-    fn consume(&mut self, skip_exprsep: bool) {
+    fn consume_maybe(&mut self, skip_exprsep: bool) -> Option<TokenPos> {
         if skip_exprsep {
             self.skip_exprsep()
         }
 
-        self.tokens.pop_front();
+        let ret = self.tokens.pop_front();
+        
+        match &ret {
+            Some(tk) => {
+                self.last_tk_pos = tk.pos;
+            }
+            None => ()
+        }
+        ret
+    }
+
+    fn consume(&mut self, skip_exprsep: bool) -> TokenPos {
+        if skip_exprsep {
+            self.skip_exprsep()
+        }
+
+        let ret = self.tokens.pop_front().unwrap();
+        self.last_tk_pos = ret.pos;
+        ret
     }
     
 
@@ -361,19 +339,25 @@ impl Parser {
         // position of this expression
         match &cur.tk {
             Keyword(kw) if kw == "def" => {
-                let e1 = self.parse_fn_def()?;
+                let e1 = self.parse_fn_def_expr()?;
                 let rest = self.parse_after_exprsep()?;
                 match rest {
-                    Some(e2) => Ok(ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos }),
+                    Some(e2) => {
+                        let p2 = e2.pos;
+                        Ok(ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos: union_posr(pos, p2) })
+                    },
                     None => Ok(e1)
                 }
             }
 
             Keyword(kw) if kw == "adt" => {
-                let e1 = self.parse_adt_def()?;
+                let e1 = self.parse_adt_def_expr()?;
                 let rest = self.parse_after_exprsep()?;
                 match rest {
-                    Some(e2) => Ok(ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos }),
+                    Some(e2) => {
+                        let p2 = e2.pos;
+                        Ok(ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos: union_posr(pos, p2) })
+                    }
                     None => Ok(e1)
                 }
             }
@@ -425,25 +409,31 @@ impl Parser {
 
         let ret = match after {
             Some(e2) => {
+                let p = union_posr(pos, e2.pos);
                 match mode {
                     0 => ExprPos { expr: AssignmentOp(
                         op_,
                         Box::new(e1), 
                         Box::new(body.unwrap(),),
-                        Box::new(e2)), pos },
-                    1 => ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos },
+                        Box::new(e2)), pos: p },
+                    1 => ExprPos { expr: Sequence(Box::new(e1), Box::new(e2)), pos: p },
                     _ => unreachable!()
                 }
             }
             None => {
                 match mode {
-                    0 => ExprPos { expr: AssignmentOp(
+                    0 => {
+                        let bd = body.unwrap();
+                        let bd_pos = bd.pos;
+
+                        ExprPos { expr: AssignmentOp (
                         op_,
                         Box::new(e1), 
-                        Box::new(body.unwrap(),),
+                        Box::new(bd,),
                         Box::new(
-                            ExprPos { expr: UnitLit, pos }
-                        )), pos },
+                            ExprPos { expr: UnitLit, pos: union_posr(pos, bd_pos) }
+                        )), pos }
+                    }
                     1 => e1,
                     _ => unreachable!()
                 }
@@ -454,23 +444,29 @@ impl Parser {
     }
 
     fn parse_let(&mut self, single: bool) -> Result<ExprPos, ParseError> {
-        self.skip_keyword("let", true)?;
+        let first_pos = self.skip_keyword("let", true)?.1;
         
-        let id_pos = self.peek_front_strict(true)?.pos;
         let pd = self.parse_param_def()?;
 
-        let equal_pos = self.skip_equals(true)?;
+        self.skip_equals(true)?;
         let val = self.parse_single_expr(false)?;
         
         let after = if single {
-            Some(ExprPos { expr: UnitLit, pos: id_pos })
+            let val_pos = val.pos;
+            Some(ExprPos { expr: UnitLit, pos: union_posr(first_pos, val_pos) })
         } else {
             self.parse_after_exprsep()?
         };
 
         let ret = match after {
-            Some(e2) => ExprPos { expr: Let(pd, Box::new(val), Box::new(e2)), pos: equal_pos },
-            None => ExprPos { expr: Let(pd, Box::new(val), Box::new(ExprPos { expr: UnitLit, pos: id_pos })), pos: equal_pos }
+            Some(e2) => {
+                let e2_pos = e2.pos;
+                ExprPos { expr: Let(pd, Box::new(val), Box::new(e2)), pos: union_posr(first_pos, e2_pos) }
+            }
+            None => {
+                let pos = union_posr(first_pos, val.pos);
+                ExprPos { expr: Let(pd, Box::new(val), Box::new(ExprPos { expr: UnitLit, pos })), pos }
+            }
         };
 
         Ok(ret)
@@ -524,10 +520,27 @@ impl Parser {
         }
     }
 
-    fn parse_adt_def(&mut self) -> Result<ExprPos, ParseError> {
+    fn parse_adt_def_expr(&mut self) -> Result<ExprPos, ParseError> {
         let first_pos = self.peek_front_strict(true)?.pos.to_owned();
+
+        let adt_def = self.parse_adt_def()?;
+        let after_maybe =  self.parse_after_exprsep()?;
         
-        let first = self.skip_keyword("adt", true)?;
+        let pos = union_posr(first_pos, self.last_tk_pos);
+
+        let after = match after_maybe {
+            Some(expr) => expr,
+            None => ExprPos { expr: UnitLit, pos }
+        };
+
+        Ok(ExprPos {
+            expr: AdtDefn(adt_def, Box::new(after)),
+            pos: pos
+        })
+    }
+
+    fn parse_adt_def(&mut self) -> Result<AdtDef, ParseError> {
+        self.skip_keyword("adt", true)?;
         let id = self.skip_identifier(true)?;
 
         let params = self.parse_paramlist()?; 
@@ -537,13 +550,10 @@ impl Parser {
         // does not contain sum type
         if !next_tk.is_some()
             || !matches!(&next_tk.unwrap().tk, AssignmentOperator(op) if op == "=") {
-            return Ok(ExprPos {
-                expr: AdtDefn(AdtDef {
+            return Ok(AdtDef {
                     name: id.0,
                     params,
                     variants: Vec::new()
-                }),
-                pos: first_pos
             })
         }
 
@@ -565,16 +575,11 @@ impl Parser {
             }
         };
 
-        Ok(ExprPos {
-            expr: AdtDefn(AdtDef {
+        Ok(AdtDef {
                 name: id.0,
                 params,
                 variants
-            }),
-            pos: first_pos
         })
-
-
     }
 
     // parse adt variants, but not spaces around them
@@ -589,7 +594,7 @@ impl Parser {
                     let next = self.peek_front(true);
                     cond = next.is_some() && matches!(&next.unwrap().tk, Delimiter(d) if d == ",");
                     if cond {
-                        self.consume(true)
+                        self.consume(true);
                     }
                 }
 
@@ -610,7 +615,26 @@ impl Parser {
         })
     }
 
-    fn parse_fn_def(&mut self) -> Result<ExprPos, ParseError> {
+    fn parse_fn_def_expr(&mut self) -> Result<ExprPos, ParseError> {
+        let first_pos = self.peek_front_strict(true)?.pos;
+
+        let fn_def = self.parse_fn_def()?;
+        let after_maybe =  self.parse_after_exprsep()?;
+        
+        let pos = union_posr(first_pos, self.last_tk_pos);
+
+        let after = match after_maybe {
+            Some(expr) => expr,
+            None => ExprPos { expr: UnitLit, pos }
+        };
+
+        Ok(ExprPos {
+            expr: FunDefn(fn_def, Box::new(after)),
+            pos: pos
+        })
+    }
+
+    fn parse_fn_def(&mut self) -> Result<FunDef, ParseError> {
         let first = self.skip_keyword("def", true)?;
         let id = self.skip_identifier(true)?;
 
@@ -633,7 +657,12 @@ impl Parser {
         
         let body = self.parse_sequence_or_assignment(false, true)?;
 
-        Ok(ExprPos { expr: Expr::FunDef(id.0, ty, params, Box::new(body)), pos: first.1 })
+        Ok(FunDef {
+            name: id.0, 
+            ty, 
+            params, 
+            body: Box::new(body)
+        })
     }
 
     fn parse_paramlist(&mut self) -> Result<Vec<ParamDef>, ParseError> {
@@ -658,7 +687,7 @@ impl Parser {
                     let next = self.peek_front_strict(true)?;
                     cond = matches!(&next.tk, Delimiter(d) if d == ",");
                     if cond {
-                        self.consume(true)
+                        self.consume(true);
                     }
                 }
 
@@ -680,15 +709,25 @@ impl Parser {
             Delimiter(d) if d == ":" => {
                 self.consume(true);
                 let ty = self.parse_type()?;
-                Ok(ParamDef { name: id.0, ty: Some(ty), pos: id.1 })
+                Ok(ParamDef { name: id.0, ty: Some(ty), pos: union_posr(id.1, self.last_tk_pos) })
             }
             _ => Ok(ParamDef { name: id.0, ty: None, pos: id.1 })
         }
     }
 
     fn parse_type(&mut self) -> Result<Type, ParseError> {
-        let ty = self.skip_prim_type(true)?;
-        Ok(ty.0)
+        let front = self.peek_front_strict(true)?;
+
+        match &front.tk {
+            PrimType(t) => {
+                let ret = Ok(Type::Primitve(*t));
+                self.consume(true);
+                ret
+            }
+            Identifier(_) => Ok(Type::UserType(self.parse_qualified_name()?)),
+            _ => Err(ParseError::UnexpectedToken(front.to_str(), 
+                vec![PRIM_STR.to_string(), IDENT_STR.to_string()], front.pos))
+        }
     }
 
     // "Single expressions" are guaranteed to evaluate to a value (or explicitly a unit literal) and do not contain
@@ -702,8 +741,8 @@ impl Parser {
         Ok(pratt_parse(first, 0, &mut VecDeque::from(rest)))
     }
     
-    fn parse_more_ops(&mut self, skip_exprsep: bool) -> Result<Vec<(String, Position, ExprPos)>, ParseError> {
-        let mut ret: Vec<(String, Position, ExprPos)> = Vec::new();
+    fn parse_more_ops(&mut self, skip_exprsep: bool) -> Result<Vec<(String, ExprPos)>, ParseError> {
+        let mut ret: Vec<(String, ExprPos)> = Vec::new();
         
         let mut front = self.peek_front(skip_exprsep);
         
@@ -714,10 +753,9 @@ impl Parser {
                     match &tk.tk {
                         Operator(op) => {
                             let op_ = op.to_owned();
-                            let pos_ = tk.pos.to_owned();
                             self.consume(true);
                             let next = self.parse_simple_expr(skip_exprsep)?;
-                            ret.push((op_.to_string(), pos_, next));
+                            ret.push((op_.to_string(), next));
                             front = self.peek_front(skip_exprsep);
                         }
                         _ => cond = false
@@ -748,7 +786,8 @@ impl Parser {
                 let op_ = op.to_owned();
                 self.consume(true);
                 let operand = self.parse_atomic_exp(skip_exprsep)?;
-                Ok(ExprPos{ expr: Prefix(op_, Box::new(operand)), pos })
+                let op_pos = operand.pos;
+                Ok(ExprPos{ expr: Prefix(op_, Box::new(operand)), pos: union_posr(pos, op_pos) })
             }
             // Operator(_) => todo!(),
             _ => self.parse_atomic_exp(skip_exprsep)
@@ -765,43 +804,47 @@ impl Parser {
             Delimiter(d) if d == "{" => {
                 self.consume(true);
                 let inner = self.parse_maybe_expr()?;
-                self.skip_delimiter(vec!["}"], true)?;
+                let p2 = self.skip_delimiter(vec!["}"], true)?.1;
+
+                let pos = union_posr(pos, p2);
 
                 match inner {
-                    Some(expr) => Ok(ExprPos{ expr: Nested(Box::new(expr)), pos: pos }),
-                    None => Ok(ExprPos{ expr: UnitLit, pos: pos })
+                    Some(expr) => Ok(ExprPos{ expr: Nested(Box::new(expr)), pos }),
+                    None => Ok(ExprPos{ expr: UnitLit, pos })
                 }
             }
             Delimiter(d) if d == "(" => {
                 self.consume(true);
                 let inner = self.parse_maybe_single_expr(true)?;
-                self.skip_delimiter(vec![")"], true)?;
+                let p2 = self.skip_delimiter(vec![")"], true)?.1;
+
+                let pos = union_posr(pos, p2);
 
                 match inner {
                     Some(expr) => Ok(expr),
-                    None => Ok(ExprPos{ expr: UnitLit, pos: pos })
+                    None => Ok(ExprPos{ expr: UnitLit, pos })
                 }
             }
             Identifier(_) => {
                 self.parse_var_or_call(skip_exprsep)
             }
             IntLiteral(val) => {
-                let ret = Ok(ExprPos { expr: IntLit(*val), pos: pos });
+                let ret = Ok(ExprPos { expr: IntLit(*val), pos });
                 self.consume(true);
                 ret
             }
             FloatLiteral(val) => {
-                let ret = Ok(ExprPos { expr: FloatLit(*val), pos: pos });
+                let ret = Ok(ExprPos { expr: FloatLit(*val), pos });
                 self.consume(true);
                 ret
             }
             StringLiteral(val) => {
-                let ret = Ok(ExprPos { expr: StringLit(val.to_owned()), pos: pos });
+                let ret = Ok(ExprPos { expr: StringLit(val.to_owned()), pos });
                 self.consume(true);
                 ret
             }
             BoolLiteral(val) => {
-                let ret = Ok(ExprPos { expr: BoolLit(*val), pos: pos });
+                let ret = Ok(ExprPos { expr: BoolLit(*val), pos });
                 self.consume(true);
                 ret
             }
@@ -821,10 +864,10 @@ impl Parser {
                 let args = self.parse_bracketed_exprs()?;
                 Ok(ExprPos {
                     expr: Call(qn, args),
-                    pos
+                    pos: union_posr(pos, self.last_tk_pos)
                 })
             }
-            _ => Ok(ExprPos { expr: Variable(qn), pos })
+            _ => Ok(ExprPos { expr: Variable(qn), pos: union_posr(pos, self.last_tk_pos) })
         }
     }
 
@@ -842,7 +885,7 @@ impl Parser {
             let next = self.peek_front_strict(true)?;
             cond = matches!(&next.tk, Delimiter(d) if d == ",");
             if cond {
-                self.consume(true)
+                self.consume(true);
             }
         }
 
@@ -894,7 +937,7 @@ impl Parser {
                 Box::new(cond), Box::new(body),
                 self.parse_elifs_expr()?,
                 self.parse_else_expr()?
-            ), pos: first.1 }
+            ), pos: union_posr(first.1, self.last_tk_pos) }
         )
     }
 
@@ -908,7 +951,7 @@ impl Parser {
         Ok(
             ExprPos{ expr: While(
                 Box::new(cond), Box::new(body)
-            ), pos: first.1 }
+            ), pos: union_posr(first.1, self.last_tk_pos) }
         )
     }
 
@@ -967,11 +1010,11 @@ impl Parser {
 
         let match_cases = self.parse_matchcases()?;
 
-        self.skip_delimiter(vec!["}"], true)?;
+        let p2 = self.skip_delimiter(vec!["}"], true)?.1;
 
         Ok(ExprPos {
             expr: Match(Box::new(scrut), match_cases),
-            pos: first_pos
+            pos: union_posr(first_pos, p2)
         })
     }
 
@@ -1018,7 +1061,7 @@ impl Parser {
                 self.consume(true);
                 Ok(WildcardPattern)
             }
-            Identifier(id) => self.parse_id_pattern(),
+            Identifier(_) => self.parse_id_pattern(),
             IntLiteral(val) => {
                 let ret = Ok(IntLiteralPattern(*val));
                 self.consume(true);
@@ -1086,7 +1129,7 @@ impl Parser {
                     let next = self.peek_front_strict(true)?;
                     cond = matches!(&next.tk, Delimiter(d) if d == ",");
                     if cond {
-                        self.consume(true)
+                        self.consume(true);
                     }
                 }
 
@@ -1100,5 +1143,8 @@ impl Parser {
 
 
 pub fn new(tokens: Vec<TokenPos>) -> Parser {
-    Parser { tokens: VecDeque::from(tokens) }
+    Parser { tokens: VecDeque::from(tokens), last_tk_pos: PositionRange {
+        start: Position{ line_no: 0, pos: 0 },
+        end: Position{ line_no: 0, pos: 0 },
+    } }
 }
