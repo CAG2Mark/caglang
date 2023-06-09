@@ -15,8 +15,15 @@ dependencies = [
 name = "caglang"
 version = "0.1.0"
 dependencies = [
+ "immutable-map",
  "regex",
 ]
+
+[[package]]
+name = "immutable-map"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "869435dffa333c329b2f9a4b3ef361f1da8a5c0dc4bcdae8f0018160e75f4116"
 
 [[package]]
 name = "memchr"
