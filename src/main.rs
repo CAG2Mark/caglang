@@ -242,6 +242,13 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             let msg = format!("not enough arguments for function \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &pos, &msg, 31);
         },
+        analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
+            let hint_msg= format!("name \x1b[1m{}\x1b[0m originally used", name);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, 33);
+
+            let msg = format!("name \x1b[1m{}\x1b[0m is already used", name);
+            print_error_at(file_name, input, "error", &offending, &msg, 31)
+        }
     }
 }
 

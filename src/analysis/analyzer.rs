@@ -65,6 +65,7 @@ pub enum AnalysisError {
     TooFewArgsError(String, PositionRange), // fn name, fn pos, position of excess args
     NoMemberError(String, PositionRange),
     TypeNotFound(String, PositionRange),
+    NameAlreadyUsedError(String, PositionRange, PositionRange), // name, offending position, original position
     VariableRedefError(String, PositionRange, PositionRange) // name, offending position, original position
 }
 
@@ -222,14 +223,14 @@ impl Analyzer {
         }
     }
 
-    fn create_fn_locals(&mut self, params: &Vec<(String, SParamDef)>) -> LocalsMap {
-        let mut new_locals = LocalsMap::new();
+    fn add_fn_locals(&mut self, params: &Vec<(String, SParamDef)>, locals: &LocalsMap) -> LocalsMap {
+        let mut ret = locals.to_owned();
 
         for p in params {
-            new_locals = new_locals.insert(p.0.to_string(), (p.1.name, p.1.ty));
+            ret = ret.insert(p.0.to_string(), (p.1.name, p.1.ty));
         }
 
-        new_locals
+        ret
     }
 
     // will update the fn map
@@ -264,7 +265,7 @@ impl Analyzer {
             NSExprPos::S(_) => unreachable!(),
         };
 
-        let more_locals = self.create_fn_locals(&fun_def_owned.params);
+        let more_locals = self.add_fn_locals(&fun_def_owned.params, locals);
 
         let body_pos = body.pos;
 
@@ -283,7 +284,7 @@ impl Analyzer {
         };
         self.fun_defs.insert(fun_id, dummy);
 
-        let transformed = self.convert(stripped, fun_def_owned.ty, &locals, &more_locals);
+        let transformed = self.convert(stripped, fun_def_owned.ty, &more_locals, &LocalsMap::new());
 
         // If not transformed correctly, return
         if transformed.is_none() {
@@ -322,34 +323,44 @@ impl Analyzer {
                 self.scan_defs_rec(*next)
             }
             Expr::FunDefn(defn, next) => {
-                let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
+                // if name already exists, error
+                if self.nme_map.contains_key(&defn.name) {
+                    let id = self.nme_map.get(&defn.name).unwrap();
+                    let og_pos = self.id_pos_map.get(&id).unwrap();
+
+                    self.name_errors.push(AnalysisError::NameAlreadyUsedError(defn.name.to_string(), defn.name_pos, *og_pos));
+
+                    self.scan_defs_rec(*next)
+                } else {
+                    let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
                 
-                let new_params = defn.params.iter().map(|p| {
-                    (
-                        p.name.to_string(),
-                        SParamDef {
-                            // TODO: fix p.pos
-                            name: self.fresh_id(p.name.to_string(), p.nme_pos),
-                            ty: self.transform_type(&p.ty, p.nme_pos),
-                            pos: p.nme_pos
-                        }
-                    )
-                }).collect();
+                    let new_params = defn.params.iter().map(|p| {
+                        (
+                            p.name.to_string(),
+                            SParamDef {
+                                // TODO: fix p.pos
+                                name: self.fresh_id(p.name.to_string(), p.nme_pos),
+                                ty: self.transform_type(&p.ty, p.nme_pos),
+                                pos: p.nme_pos
+                            }
+                        )
+                    }).collect();
 
-                let name_pos = defn.name_pos;
+                    let name_pos = defn.name_pos;
 
-                let defn = TmpFunDef {
-                    name_str: defn.name.to_string(),
-                    name: id,
-                    name_pos,
-                    ty: self.transform_type(&defn.ty, name_pos),
-                    params: new_params,
-                    body: NSExprPos::N(*defn.body)
-                };
+                    let defn = TmpFunDef {
+                        name_str: defn.name.to_string(),
+                        name: id,
+                        name_pos,
+                        ty: self.transform_type(&defn.ty, name_pos),
+                        params: new_params,
+                        body: NSExprPos::N(*defn.body)
+                    };
 
-                self.fun_defs.insert(id, defn);
+                    self.fun_defs.insert(id, defn);
 
-                ExprPos { expr: Expr::FunDefId(id, name_pos, Box::new(self.scan_defs_rec(*next))), pos: e.pos} 
+                    ExprPos { expr: Expr::FunDefId(id, name_pos, Box::new(self.scan_defs_rec(*next))), pos: e.pos } 
+                }
             }
             Expr::Sequence(e1, e2) => ExprPos {
                 expr: Expr::Sequence(e1, Box::new(self.scan_defs_rec(*e2))),
@@ -410,8 +421,10 @@ impl Analyzer {
         let pos = e.pos;
 
         let s_expr: SExpr = match e.expr {
-            Expr::Nested(e) => 
-                self.convert(*e, expected, prev_locals, locals)?.expr,
+            Expr::Nested(e) => {
+                let stripped = self.scan_defs(*e);
+                self.convert(stripped, expected, prev_locals, &LocalsMap::new())?.expr // fresh locals
+            }
             
             Expr::FunDefn(_, after) => {
                 self.convert(*after, expected, prev_locals, locals)?.expr
@@ -530,7 +543,7 @@ impl Analyzer {
                 self.add_constraint(expected, ret_type, pos);
 
                 // transform function
-                self.transform_fn(qn.first, pos, locals);
+                self.transform_fn(qn.first, pos, prev_locals);
 
                 // println!("Ret type:");
                 // self.print_type(&self.resolve_type(ret_type));
@@ -597,10 +610,12 @@ impl Analyzer {
                 
                 // get fresh local
                 let new_local = self.fresh_id(pd.name.to_string(), pd.nme_pos);
-
+                
+                // add to both maps (prev locals is used to pass to nested scopes for variable shadowing)
+                let more_prev_locals = prev_locals.insert(pd.name.to_string(), (new_local, ty));
                 let more_locals = locals.insert(pd.name, (new_local, ty));
 
-                let after = self.convert(*after, expected, prev_locals, &more_locals)?;
+                let after = self.convert(*after, expected, &more_prev_locals, &more_locals)?;
                 
                 SExpr::Let(
                     SParamDef {
@@ -615,7 +630,7 @@ impl Analyzer {
             Expr::AssignmentOp(_, _, _, _) => todo!(),
             Expr::AdtDefn(_, _) => todo!(),
             Expr::FunDefId(id, pos, after) => {
-                self.transform_fn(self.id_map.get(&id).unwrap().to_string(), pos, locals);
+                self.transform_fn(self.id_map.get(&id).unwrap().to_string(), pos, prev_locals);
                 self.convert(*after, expected, prev_locals, locals)?.expr
             },
         };
