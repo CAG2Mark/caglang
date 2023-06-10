@@ -5,6 +5,10 @@ pub struct UnionFindInt {
 }
 
 impl UnionFindInt {
+    pub fn size(&self) -> u64 {
+        self.cur
+    } 
+
     pub fn fresh_var(&mut self) -> u64 {
         let ret = self.cur;
         self.arr.push(self.cur);
@@ -55,6 +59,12 @@ impl UnionFindInt {
 
     pub fn equal(&mut self, x: u64, y: u64) -> bool {
         self.find_set(x) == self.find_set(y)
+    }
+
+    pub fn print(&mut self) {
+        for i in 0..self.cur {
+            println!("{} -> {}", i, self.find_set(i));
+        }
     }
 }
 

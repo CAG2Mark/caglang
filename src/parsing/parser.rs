@@ -458,13 +458,13 @@ impl Parser {
             self.parse_after_exprsep()?
         };
 
+        let pos = union_posr(first_pos, val.pos);
         let ret = match after {
             Some(e2) => {
-                let e2_pos = e2.pos;
-                ExprPos { expr: Let(pd, Box::new(val), Box::new(e2)), pos: union_posr(first_pos, e2_pos) }
+                ExprPos { expr: Let(pd, Box::new(val), Box::new(e2)), pos }
             }
             None => {
-                let pos = union_posr(first_pos, val.pos);
+                
                 ExprPos { expr: Let(pd, Box::new(val), Box::new(ExprPos { expr: UnitLit, pos })), pos }
             }
         };
@@ -552,6 +552,7 @@ impl Parser {
             || !matches!(&next_tk.unwrap().tk, AssignmentOperator(op) if op == "=") {
             return Ok(AdtDef {
                     name: id.0,
+                    name_pos: id.1,
                     params,
                     variants: Vec::new()
             })
@@ -577,6 +578,7 @@ impl Parser {
 
         Ok(AdtDef {
                 name: id.0,
+                name_pos: id.1,
                 params,
                 variants
         })
@@ -611,6 +613,7 @@ impl Parser {
         let params = self.parse_paramlist()?;
         Ok(AdtVariant {
             name: id.0,
+            name_pos: id.1,
             params
         })
     }
@@ -641,7 +644,7 @@ impl Parser {
         let params = self.parse_paramlist()?; 
 
         let next = self.peek_front_strict(true)?;
-        let ty : Option<Type> = match &next.tk {
+        let ty : Option<TypePos> = match &next.tk {
             Delimiter(d) if d == ":" => {
                 self.consume(true);
                 let ret = Some(self.parse_type()?);
@@ -659,6 +662,7 @@ impl Parser {
 
         Ok(FunDef {
             name: id.0, 
+            name_pos: id.1,
             ty, 
             params, 
             body: Box::new(body)
@@ -709,22 +713,23 @@ impl Parser {
             Delimiter(d) if d == ":" => {
                 self.consume(true);
                 let ty = self.parse_type()?;
-                Ok(ParamDef { name: id.0, ty: Some(ty), pos: union_posr(id.1, self.last_tk_pos) })
+                Ok(ParamDef { name: id.0, ty: Some(ty), nme_pos: id.1})
             }
-            _ => Ok(ParamDef { name: id.0, ty: None, pos: id.1 })
+            _ => Ok(ParamDef { name: id.0, ty: None, nme_pos: id.1 })
         }
     }
 
-    fn parse_type(&mut self) -> Result<Type, ParseError> {
+    fn parse_type(&mut self) -> Result<TypePos, ParseError> {
         let front = self.peek_front_strict(true)?;
+        let pos = front.pos;
 
         match &front.tk {
             PrimType(t) => {
-                let ret = Ok(Type::Primitve(*t));
+                let ret = TypePos { ty: Type::Primitve(*t), pos };
                 self.consume(true);
-                ret
+                Ok(ret)
             }
-            Identifier(_) => Ok(Type::UserType(self.parse_qualified_name()?)),
+            Identifier(_) => Ok(TypePos { ty: Type::UserType(self.parse_qualified_name()?), pos }),
             _ => Err(ParseError::UnexpectedToken(front.to_str(), 
                 vec![PRIM_STR.to_string(), IDENT_STR.to_string()], front.pos))
         }
@@ -801,6 +806,9 @@ impl Parser {
         let pos = front.pos;
 
         match &front.tk {
+            Keyword(k) if k == "new" => {
+                self.parse_ctor(skip_exprsep)
+            } 
             Delimiter(d) if d == "{" => {
                 self.consume(true);
                 let inner = self.parse_maybe_expr()?;
@@ -868,6 +876,25 @@ impl Parser {
                 })
             }
             _ => Ok(ExprPos { expr: Variable(qn), pos: union_posr(pos, self.last_tk_pos) })
+        }
+    }
+
+    fn parse_ctor(&mut self, skip_exprsep: bool) -> Result<ExprPos, ParseError> {
+        let first = self.skip_keyword("new", true)?;
+        let pos = first.1;
+        
+        let qn = self.parse_qualified_name()?;
+        let front = self.peek_front(skip_exprsep);
+        
+        match &front {
+            Some(tk) if matches!(&tk.tk, Delimiter(d) if d == "(") => {
+                let args = self.parse_bracketed_exprs()?;
+                Ok(ExprPos {
+                    expr: Ctor(qn, args),
+                    pos: union_posr(pos, self.last_tk_pos)
+                })
+            }
+            _ => Ok(ExprPos { expr: Ctor(qn, Vec::new()), pos: union_posr(pos, self.last_tk_pos) })
         }
     }
 

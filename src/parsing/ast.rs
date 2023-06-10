@@ -6,8 +6,8 @@ use crate::parsing::tokens::Prim;
 
 pub struct ParamDef {
     pub name: String, 
-    pub ty: Option<Type>, 
-    pub pos: PositionRange
+    pub ty: Option<TypePos>, 
+    pub nme_pos: PositionRange,
 }
 
 
@@ -25,6 +25,11 @@ impl fmt::Display for QualifiedName {
     }
 }
 
+pub struct TypePos {
+    pub ty: Type,
+    pub pos: PositionRange
+}
+
 pub enum Type {
     Primitve(Prim),
     UserType(QualifiedName)
@@ -40,19 +45,22 @@ impl fmt::Display for Type {
 }
 
 pub struct FunDef {
-    pub name: String, 
-    pub ty: Option<Type>, 
+    pub name: String,
+    pub name_pos: PositionRange,
+    pub ty: Option<TypePos>, 
     pub params: Vec<ParamDef>, 
     pub body: Box<ExprPos>
 }
 
 pub struct AdtVariant {
     pub name: String,
+    pub name_pos: PositionRange,
     pub params: Vec<ParamDef>
 }
 
 pub struct AdtDef {
     pub name: String,
+    pub name_pos: PositionRange,
     pub params: Vec<ParamDef>,
     pub variants: Vec<AdtVariant>
 }
@@ -79,6 +87,7 @@ pub enum Expr {
     FunDefn(FunDef, Box<ExprPos>), // id, ret type, params, body, after
     Variable(QualifiedName),
     Call(QualifiedName, Vec<ExprPos>),
+    Ctor(QualifiedName, Vec<ExprPos>),
     Sequence(Box<ExprPos>, Box<ExprPos>),
     Ite(Box<ExprPos>, Box<ExprPos>, Vec<(Box<ExprPos>, Box<ExprPos>)>, Option<Box<ExprPos>>), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
     Match(Box<ExprPos>, Vec<MatchCase>), // scrutinee, matches
@@ -92,7 +101,10 @@ pub enum Expr {
     Prefix(String, Box<ExprPos>), // Op, expr
     Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
     AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
-    AdtDefn(AdtDef, Box<ExprPos>) // // adtdef, after
+    AdtDefn(AdtDef, Box<ExprPos>), // // adtdef, after
+
+    // internal use for name analyzer
+    FunDefId(u64, PositionRange, Box<ExprPos>)
 }
 
 pub struct ExprPos {
@@ -102,7 +114,7 @@ pub struct ExprPos {
 
 pub fn format_param_df(p: &ParamDef) -> String {
     match &p.ty {
-        Some(t) => format!("{}: {}", p.name, t),
+        Some(t) => format!("{}: {}", p.name, t.ty),
         None => p.name.to_owned()
     }
 }
@@ -222,7 +234,7 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
         }
         Expr::FunDefn(df, after) => {
             let type_str = match &df.ty {
-                Some(t) => format!("{}", t),
+                Some(t) => format!(": {}", t.ty),
                 None => "".to_string(),
             };
 
@@ -305,6 +317,10 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
             let cases_str = format_matchcases(cases, indent + 1);
             format!("{first_line_indents}match {scrut_str} {{\n{cases_str}\n{indents}}}") 
         }
+        Expr::Ctor(qn, args) => {
+            format!("new {}{}({})", first_line_indents, qn, format_exprs(args, indent + 1))
+        }
+        Expr::FunDefId(_, _, _) => unreachable!(),
     };
 
     ret

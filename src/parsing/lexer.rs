@@ -142,7 +142,7 @@ fn string_lit_convert(val: String) -> Result<String, usize> {
     Ok(ret)
 }
 
-const KEYWORDS: &'static [&'static str] = &["def", "if", "elif", "else", "while", "continue", "break", "match", "let", "adt"];
+const KEYWORDS: &'static [&'static str] = &["def", "if", "elif", "else", "while", "continue", "break", "match", "let", "adt", "new"];
 const PRIMS: &'static [&'static str] = &["Int", "Bool", "String", "Float", "Unit"];
 const BOOL_LIT: &'static [&'static str] = &["true", "false"];
 const OPERATORS: &'static [&'static str] = &["+","-","*","/","%","!","!=","||","&&","==","<","<=",">",">="];
