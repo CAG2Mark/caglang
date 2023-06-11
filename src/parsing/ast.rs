@@ -259,13 +259,12 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
             };
 
             format!(
-                "{}def {}{}{} = {{\n{}\n{}}};\n{}{}",
+                "{}def {}{}{} = {{\n{}\n{}}};\n{}",
                 first_line_indents,
                 df.name,
                 format_param_dfs(&df.params),
                 type_str,
                 format_tree(&body_inner, indent + 1, true),
-                indents,
                 indents,
                 format_tree(&after.expr, indent, true)
             )
@@ -353,7 +352,7 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
             let variants = format_adt_variants(&adt.variants, indent);
             let after = format_tree(&after.expr, indent, true);
 
-            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}};\n{indents}{after}")
+            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}};\n{after}")
         }
         Expr::Match(scrut, cases) => {
             let scrut_str = format_tree(&scrut.expr, indent + 1, false);
