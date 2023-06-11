@@ -263,7 +263,7 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             print_error_at(file_name, input, "error", &pos, &msg, 31);
         }
         analyzer::AnalysisError::TooFewArgsError(name, pos) => {
-            let msg = format!("not enough arguments for function \x1b[1m{}\x1b[0m", name);
+            let msg = format!("not enough arguments for \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &pos, &msg, 31);
         }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
