@@ -42,6 +42,7 @@ pub struct SAdtDef {
     pub name: Identifier,
     pub params: Vec<SParamDef>,
     pub name_map: HashMap<String, Identifier>,
+    pub variant_name_map: HashMap<String, Identifier>,
     pub variants: Vec<SAdtVariant>,
 }
 

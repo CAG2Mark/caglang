@@ -14,6 +14,7 @@ use crate::util::union_find_int;
 use crate::util::union_find_int::UnionFindInt;
 
 use immutable_map::map::TreeMap;
+use immutable_map::set::TreeSet;
 
 type Identifier = u64;
 type Local = (Identifier, TypeOrVar);
@@ -73,6 +74,8 @@ pub enum AnalysisError {
     TypeNotFound(String, PositionRange),
     NameAlreadyUsedError(String, PositionRange, PositionRange), // name, offending position, original position
     VariableRedefError(String, PositionRange, PositionRange), // name, offending position, original position
+    DuplicateMemberError(String, String, PositionRange, PositionRange), // name, offending position, original position
+    DuplicateVariantError(String, String, PositionRange, PositionRange), // name, offending position, original position
 }
 
 impl Analyzer {
@@ -222,7 +225,7 @@ impl Analyzer {
                     let id = adts.get(&t.first);
 
                     match id {
-                        Some(id) if self.adt_defs.get(&id).is_some() => {
+                        Some(id) => {
                             TypeOrVar::Ty(SType::UserType(*id))
                         }
                         _ => {
@@ -348,16 +351,16 @@ impl Analyzer {
 
     // Adds extra functions and adts to the map in the current scope
     fn scan_defs(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap) -> (ExprPos, FnMap, AdtMap) {
-        let mut names: HashMap<String, Identifier> = HashMap::new();
-        self.scan_names(&e, &mut names);
-        self.scan_defs_rec(e, fns, adts, &names)
+        let (fns_, adts_) = self.scan_names(&e, fns, adts);
+        (self.scan_defs_rec(e, &fns_, &adts_), fns_, adts_)
     }
 
-    fn scan_names(&mut self, e: &ExprPos, names: &mut HashMap<String, Identifier>) {
+    fn scan_names(&mut self, e: &ExprPos, fns: FnMap, adts: AdtMap) -> (FnMap, AdtMap) {
         match &e.expr {
             Expr::AdtDefn(defn, next) => {
-                if names.contains_key(&defn.name) {
-                    let id = names.get(&defn.name).unwrap();
+                if adts.contains_key(&defn.name) {
+                    // error
+                    let id = adts.get(&defn.name).unwrap();
                     let og_pos = self.id_pos_map.get(&id).unwrap();
 
                     self.name_errors.push(AnalysisError::NameAlreadyUsedError(
@@ -365,43 +368,191 @@ impl Analyzer {
                         defn.name_pos,
                         *og_pos,
                     ));
-                } else {
-                    let id = self.fresh_id(defn.name.clone(), e.pos);
-                    names.insert(defn.name.clone(), id);
-                }
 
-                self.scan_names(next, names)
+                    self.scan_names(&next, fns, adts)
+                } else {
+                    let id = self.fresh_id(defn.name.clone(), defn.name_pos);
+                    let more = adts.insert(defn.name.clone(), id);
+
+                    self.scan_names(&next, fns, more)
+                }
             }
             Expr::FunDefn(defn, next) => {
-                let id = self.fresh_id(defn.name.clone(), e.pos);
-                names.insert(defn.name.clone(), id);
-                self.scan_names(next, names)
+                if fns.contains_key(&defn.name) {
+                    // error
+                    let id = fns.get(&defn.name).unwrap();
+                    let og_pos = self.id_pos_map.get(&id).unwrap();
+
+                    self.name_errors.push(AnalysisError::NameAlreadyUsedError(
+                        defn.name.to_string(),
+                        defn.name_pos,
+                        *og_pos,
+                    ));
+
+                    self.scan_names(&next, fns, adts)
+                } else {
+                    let id = self.fresh_id(defn.name.clone(), defn.name_pos);
+                    let more = fns.insert(defn.name.clone(), id);
+
+                    self.scan_names(&next, more, adts)
+                }
             }
-            Expr::Sequence(e1, e2) => {
-                self.scan_names(e2, names);
+            Expr::Sequence(e1, e2) => self.scan_names(&e2, fns, adts),
+            Expr::Let(_, _, after) => self.scan_names(&after, fns, adts),
+            _ => (fns, adts),
+        }
+    }
+
+    fn convert_adt(&mut self, defn: AdtDef, adts: &AdtMap) -> Option<SAdtDef> {
+        let mut error = false;
+
+        let id = self.fresh_id(defn.name.clone(), defn.name_pos);
+
+        let mut name_map: HashMap<String, Identifier> = HashMap::new();
+        let mut name_pos_map: HashMap<String, PositionRange> = HashMap::new();
+
+        // add universal parameters to set
+
+        let mut s_params: Vec<SParamDef> = Vec::new();
+        // rules to be enforced:
+        // 1. variants cannot have the same name
+        // 2. for any one variant, its parameters combined with the
+        //    universal parameters may not clash
+
+        // TODO: should refactor this, a lot of code is copied and pasted
+        
+        // 1. scan universal names
+        for p in defn.params {
+            let maybe_pos = name_pos_map.get(&p.name);
+            // name already used
+            if maybe_pos.is_some() {
+                let n = maybe_pos.unwrap();
+                self.name_errors.push(
+                    AnalysisError::DuplicateMemberError(p.name, defn.name.clone(), p.nme_pos, *n)
+                );
+                error = true;
+                continue;
             }
-            Expr::Let(_, _, after) => {
-                self.scan_names(after, names);
+
+            let id = self.fresh_id(p.name.clone(), p.nme_pos);
+            let ty = self.transform_type(&p.ty, p.nme_pos, adts);
+
+            name_map.insert(p.name.clone(), id);
+            name_pos_map.insert(p.name.clone(), p.nme_pos);
+
+            s_params.push(SParamDef {
+                name: id,
+                ty,
+                pos: p.nme_pos,
+            })
+        }
+
+        let mut s_variants: Vec<SAdtVariant> = Vec::new();
+
+        let mut variant_name_map: HashMap<String, Identifier> = HashMap::new();
+        let mut variant_pos_map: HashMap<String, PositionRange> = HashMap::new();
+
+        // 2. scan variants, convert them too
+        for v in defn.variants {
+            let maybe_pos = variant_pos_map.get(&v.name);
+            // name already used
+            if maybe_pos.is_some() {
+                let n = maybe_pos.unwrap();
+                self.name_errors.push(
+                    AnalysisError::DuplicateVariantError(v.name, defn.name.clone(), v.name_pos, *n)
+                );
+                error = true;
+                continue;
             }
-            _ => ()
+
+            let id = self.fresh_id(v.name.clone(), v.name_pos);
+
+            variant_name_map.insert(v.name.clone(), id);
+            variant_pos_map.insert(v.name.clone(), v.name_pos);
+
+            // convert parameters
+
+            let mut s_variant_params: Vec<SParamDef> = Vec::new();
+
+            let mut variant_int_name_map: HashMap<String, Identifier> = HashMap::new();
+            let mut variant_int_pos_map: HashMap<String, PositionRange> = HashMap::new();
+
+            for p in v.params {
+                let maybe_pos1 = name_pos_map.get(&p.name);
+                let maybe_pos2 = variant_int_pos_map.get(&p.name);
+                // name already used
+                if maybe_pos1.is_some() {
+                    let n = maybe_pos1.unwrap();
+                    self.name_errors.push(
+                        AnalysisError::DuplicateMemberError(p.name, defn.name.clone(), p.nme_pos, *n)
+                    );
+                    error = true;
+                    continue;
+                } else if maybe_pos2.is_some() {
+                    let n = maybe_pos2.unwrap();
+                    self.name_errors.push(
+                        AnalysisError::DuplicateMemberError(p.name, defn.name.clone(), p.nme_pos, *n)
+                    );
+                    error = true;
+                    continue;
+                }
+    
+                let id = self.fresh_id(p.name.clone(), p.nme_pos);
+                let ty = self.transform_type(&p.ty, p.nme_pos, adts);
+    
+                variant_int_name_map.insert(p.name.clone(), id);
+                variant_int_pos_map.insert(p.name.clone(), p.nme_pos);
+                
+                s_variant_params.push(SParamDef {
+                    name: id,
+                    ty,
+                    pos: p.nme_pos,
+                })
+            }
+
+            // create variant
+            if !error {
+                s_variants.push(SAdtVariant { name: id, name_pos: v.name_pos, params: s_variant_params })
+            }
+        }
+
+        if !error {
+            Some(SAdtDef {
+                name: id,
+                params: s_params,
+                name_map,
+                variant_name_map,
+                variants: s_variants,
+            })
+        } else {
+            None
         }
     }
 
     // strips away all adt definitions, replaces function definitions with IDs
-    fn scan_defs_rec(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap, names: &HashMap<String, Identifier>) -> (ExprPos, FnMap, AdtMap) {
+    fn scan_defs_rec(&mut self, e: ExprPos, fns: &FnMap, adts: &AdtMap) -> ExprPos {
         match e.expr {
             Expr::AdtDefn(defn, next) => {
-                // let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
-                todo!();
-                // self.scan_defs_rec(*next)
+                let id = *adts.get(&defn.name).unwrap();
+
+                if !self.adt_defs.contains_key(&id) {
+                    match self.convert_adt(defn, adts) {
+                        Some(d) => {
+                            self.adt_defs.insert(id, d);
+                        },
+                        None => ()
+                    }
+                }
+
+                self.scan_defs_rec(*next, fns, adts)
             }
             Expr::FunDefn(defn, next) => {
-                // if name already exists, this error was already caught before. just continue
-                if fns.contains_key(&defn.name) {
-                    self.scan_defs_rec(*next, fns, adts, names)
-                } else {
-                    let id = *names.get(&defn.name).unwrap();
+                let id = *fns.get(&defn.name).unwrap();
 
+                // if name already exists, this error was already caught before. just continue
+                if self.fun_defs.contains_key(&id) {
+                    self.scan_defs_rec(*next, fns, adts)
+                } else {
                     let new_params = defn
                         .params
                         .iter()
@@ -431,43 +582,30 @@ impl Analyzer {
                     };
 
                     self.fun_defs.insert(id, defn);
-                    let more_fns = fns.insert(nme.to_string(), id);
 
-                    let ret = self.scan_defs_rec(*next, more_fns, adts, names);
+                    let ret = self.scan_defs_rec(*next, fns, adts);
 
-                    (
-                        ExprPos {
-                            expr: Expr::FunDefId(id, name_pos, Box::new(ret.0)),
-                            pos: e.pos,
-                        },
-                        ret.1,
-                        ret.2,
-                    )
+                    ExprPos {
+                        expr: Expr::FunDefId(id, name_pos, Box::new(ret)),
+                        pos: e.pos,
+                    }
                 }
             }
             Expr::Sequence(e1, e2) => {
-                let ret = self.scan_defs_rec(*e2, fns, adts, names);
-                (
-                    ExprPos {
-                        expr: Expr::Sequence(e1, Box::new(ret.0)),
-                        pos: e.pos,
-                    },
-                    ret.1,
-                    ret.2,
-                )
+                let ret = self.scan_defs_rec(*e2, fns, adts);
+                ExprPos {
+                    expr: Expr::Sequence(e1, Box::new(ret)),
+                    pos: e.pos,
+                }
             }
             Expr::Let(pd, expr, after) => {
-                let ret = self.scan_defs_rec(*after, fns, adts, names);
-                (
-                    ExprPos {
-                        expr: Expr::Let(pd, expr, Box::new(ret.0)),
-                        pos: e.pos,
-                    },
-                    ret.1,
-                    ret.2,
-                )
+                let ret = self.scan_defs_rec(*after, fns, adts);
+                ExprPos {
+                    expr: Expr::Let(pd, expr, Box::new(ret)),
+                    pos: e.pos,
+                }
             }
-            _ => (e, fns, adts),
+            _ => e,
         }
     }
 
@@ -708,77 +846,66 @@ impl Analyzer {
             Expr::Ite(cond, if_e, elif_e, else_e) => {
                 let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
-                let cond_conv = self.convert(
-                    *cond,
-                    bool_prim,
-                    prev_locals,
-                    locals,
-                    fns,
-                    adts,
-                );
+                let cond_conv = self.convert(*cond, bool_prim, prev_locals, locals, fns, adts);
 
                 let if_e_conv = self.convert(*if_e, expected, prev_locals, locals, fns, adts);
 
                 let mut elif_e_conv_: Vec<(Option<SExprPos>, Option<SExprPos>)> = Vec::new();
 
                 for e in elif_e {
-                    elif_e_conv_.push(
-                        (
-                            self.convert(*e.0, bool_prim, prev_locals, locals, fns, adts),
-                            self.convert(*e.1, expected, prev_locals, locals, fns, adts)
-                        )
-                    )
+                    elif_e_conv_.push((
+                        self.convert(*e.0, bool_prim, prev_locals, locals, fns, adts),
+                        self.convert(*e.1, expected, prev_locals, locals, fns, adts),
+                    ))
                 }
 
                 let else_e_conv = match else_e {
-                    Some(e) => Some(Box::new(self.convert(*e, expected, prev_locals, locals, fns, adts)?)),
-                    None => None
+                    Some(e) => Some(Box::new(self.convert(
+                        *e,
+                        expected,
+                        prev_locals,
+                        locals,
+                        fns,
+                        adts,
+                    )?)),
+                    None => None,
                 };
-                
+
                 // Only check the option values now to maximise the number of errors outputted at once
 
                 let mut elif_e_conv: Vec<(Box<SExprPos>, Box<SExprPos>)> = Vec::new();
 
                 for e in elif_e_conv_ {
-                    elif_e_conv.push(
-                        (
-                            Box::new(e.0?),
-                            Box::new(e.1?)
-                        )
-                    )
+                    elif_e_conv.push((Box::new(e.0?), Box::new(e.1?)))
                 }
 
                 SExpr::Ite(
                     Box::new(cond_conv?),
                     Box::new(if_e_conv?),
                     elif_e_conv,
-                    else_e_conv
+                    else_e_conv,
                 )
             }
             Expr::Match(_, _) => todo!(),
             Expr::While(cond, body) => {
                 let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
-                let cond_conv = self.convert(
-                    *cond,
-                    bool_prim,
+                let cond_conv = self.convert(*cond, bool_prim, prev_locals, locals, fns, adts);
+
+                let body_conv = self.convert(
+                    *body,
+                    TypeOrVar::Ty(SType::Top),
                     prev_locals,
                     locals,
                     fns,
                     adts,
                 );
 
-                let body_conv = self.convert(*body, TypeOrVar::Ty(SType::Top), prev_locals, locals, fns, adts);
-                
                 // while expression has type unit
                 self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Bool)), pos);
 
-                SExpr::While(
-                    Box::new(cond_conv?),
-                    Box::new(body_conv?)
-                )
-
-            },
+                SExpr::While(Box::new(cond_conv?), Box::new(body_conv?))
+            }
             Expr::IntLit(v) => {
                 self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Int)), pos);
                 SExpr::IntLit(v)

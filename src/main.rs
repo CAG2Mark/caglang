@@ -267,10 +267,24 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             print_error_at(file_name, input, "error", &pos, &msg, 31);
         }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
-            let hint_msg = format!("name \x1b[1m{}\x1b[0m originally used", name);
+            let hint_msg = format!("name \x1b[1m{}\x1b[0m originally used here", name);
             print_error_at(file_name, input, "hint", &original, &hint_msg, 33);
 
             let msg = format!("name \x1b[1m{}\x1b[0m is already used", name);
+            print_error_at(file_name, input, "error", &offending, &msg, 31)
+        }
+        analyzer::AnalysisError::DuplicateMemberError(name, adt_name, offending, original) => {
+            let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, 33);
+
+            let msg = format!("member \x1b[1m{}\x1b[0m already exists in {}", name, adt_name);
+            print_error_at(file_name, input, "error", &offending, &msg, 31)
+        },
+        analyzer::AnalysisError::DuplicateVariantError(name, adt_name, offending, original) => {
+            let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, 33);
+
+            let msg = format!("duplicate variant name \x1b[1m{}\x1b[0m of ADT {}", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, 31)
         }
     }

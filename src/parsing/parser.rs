@@ -361,6 +361,12 @@ impl Parser {
     // x = singleExpr; ?
     // singleExpr (; singleExpr?)?
     fn parse_expr(&mut self) -> Result<ExprPos, ParseError> {
+        if self.peek_front(true).is_none() {
+            return Ok(ExprPos {
+                expr: UnitLit,
+                pos: PositionRange { start: Position { line_no: 0, pos: 0 }, end: Position { line_no: 0, pos: 0 } }
+            })
+        }
         let cur = self.peek_front_strict(true)?;
         let pos = cur.pos.to_owned();
 
@@ -677,9 +683,9 @@ impl Parser {
         let first_pos = self.peek_front_strict(true)?.pos;
 
         let fn_def = self.parse_fn_def()?;
-        let after_maybe = self.parse_after_exprsep()?;
-
         let pos = union_posr(first_pos, self.last_tk_pos);
+        
+        let after_maybe = self.parse_after_exprsep()?;
 
         let after = match after_maybe {
             Some(expr) => expr,
