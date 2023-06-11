@@ -492,7 +492,6 @@ impl Analyzer {
         fns: &FnMap,
         adts: &AdtMap,
     ) -> Option<SExprPos> {
-        
         pub fn get_local(
             name: &String,
             prev_locals: &LocalsMap,
@@ -681,9 +680,80 @@ impl Analyzer {
                     None => return None,
                 }
             }
-            Expr::Ite(_, _, _, _) => todo!(),
+            Expr::Ite(cond, if_e, elif_e, else_e) => {
+                let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
+
+                let cond_conv = self.convert(
+                    *cond,
+                    bool_prim,
+                    prev_locals,
+                    locals,
+                    fns,
+                    adts,
+                );
+
+                let if_e_conv = self.convert(*if_e, expected, prev_locals, locals, fns, adts);
+
+                let mut elif_e_conv_: Vec<(Option<SExprPos>, Option<SExprPos>)> = Vec::new();
+
+                for e in elif_e {
+                    elif_e_conv_.push(
+                        (
+                            self.convert(*e.0, bool_prim, prev_locals, locals, fns, adts),
+                            self.convert(*e.1, expected, prev_locals, locals, fns, adts)
+                        )
+                    )
+                }
+
+                let else_e_conv = match else_e {
+                    Some(e) => Some(Box::new(self.convert(*e, expected, prev_locals, locals, fns, adts)?)),
+                    None => None
+                };
+                
+                // Only check the option values now to maximise the number of errors outputted at once
+
+                let mut elif_e_conv: Vec<(Box<SExprPos>, Box<SExprPos>)> = Vec::new();
+
+                for e in elif_e_conv_ {
+                    elif_e_conv.push(
+                        (
+                            Box::new(e.0?),
+                            Box::new(e.1?)
+                        )
+                    )
+                }
+
+                SExpr::Ite(
+                    Box::new(cond_conv?),
+                    Box::new(if_e_conv?),
+                    elif_e_conv,
+                    else_e_conv
+                )
+            }
             Expr::Match(_, _) => todo!(),
-            Expr::While(_, _) => todo!(),
+            Expr::While(cond, body) => {
+                let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
+
+                let cond_conv = self.convert(
+                    *cond,
+                    bool_prim,
+                    prev_locals,
+                    locals,
+                    fns,
+                    adts,
+                );
+
+                let body_conv = self.convert(*body, TypeOrVar::Ty(SType::Top), prev_locals, locals, fns, adts);
+                
+                // while expression has type unit
+                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Bool)), pos);
+
+                SExpr::While(
+                    Box::new(cond_conv?),
+                    Box::new(body_conv?)
+                )
+
+            },
             Expr::IntLit(v) => {
                 self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Int)), pos);
                 SExpr::IntLit(v)
@@ -718,7 +788,7 @@ impl Analyzer {
 
                     self.name_errors.push(AnalysisError::VariableRedefError(
                         pd.name.to_string(),
-                        pos,
+                        pd.nme_pos,
                         *og_pos,
                     ));
                 }
@@ -750,7 +820,7 @@ impl Analyzer {
                 )
             }
             Expr::AssignmentOp(_, _, _, _) => todo!(),
-            Expr::AdtDefn(_, _) => todo!(),
+            Expr::AdtDefn(_, _) => unreachable!(),
             Expr::FunDefId(id, pos, after) => {
                 self.transform_fn(
                     self.id_map.get(&id).unwrap().to_string(),
