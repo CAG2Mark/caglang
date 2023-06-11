@@ -348,22 +348,16 @@ impl Analyzer {
 
     // Adds extra functions and adts to the map in the current scope
     fn scan_defs(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap) -> (ExprPos, FnMap, AdtMap) {
-        // TODO: scan names
-        self.scan_defs_rec(e, fns, adts)
+        let mut names: HashMap<String, Identifier> = HashMap::new();
+        self.scan_names(&e, &mut names);
+        self.scan_defs_rec(e, fns, adts, &names)
     }
 
-    // strips away all adt definitions, replaces function definitions with IDs
-    fn scan_defs_rec(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap) -> (ExprPos, FnMap, AdtMap) {
-        match e.expr {
+    fn scan_names(&mut self, e: &ExprPos, names: &mut HashMap<String, Identifier>) {
+        match &e.expr {
             Expr::AdtDefn(defn, next) => {
-                let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
-                todo!();
-                // self.scan_defs_rec(*next)
-            }
-            Expr::FunDefn(defn, next) => {
-                // if name already exists, error
-                if fns.contains_key(&defn.name) {
-                    let id = fns.get(&defn.name).unwrap();
+                if names.contains_key(&defn.name) {
+                    let id = names.get(&defn.name).unwrap();
                     let og_pos = self.id_pos_map.get(&id).unwrap();
 
                     self.name_errors.push(AnalysisError::NameAlreadyUsedError(
@@ -371,10 +365,42 @@ impl Analyzer {
                         defn.name_pos,
                         *og_pos,
                     ));
-
-                    self.scan_defs_rec(*next, fns, adts)
                 } else {
-                    let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
+                    let id = self.fresh_id(defn.name.clone(), e.pos);
+                    names.insert(defn.name.clone(), id);
+                }
+
+                self.scan_names(next, names)
+            }
+            Expr::FunDefn(defn, next) => {
+                let id = self.fresh_id(defn.name.clone(), e.pos);
+                names.insert(defn.name.clone(), id);
+                self.scan_names(next, names)
+            }
+            Expr::Sequence(e1, e2) => {
+                self.scan_names(e2, names);
+            }
+            Expr::Let(_, _, after) => {
+                self.scan_names(after, names);
+            }
+            _ => ()
+        }
+    }
+
+    // strips away all adt definitions, replaces function definitions with IDs
+    fn scan_defs_rec(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap, names: &HashMap<String, Identifier>) -> (ExprPos, FnMap, AdtMap) {
+        match e.expr {
+            Expr::AdtDefn(defn, next) => {
+                // let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
+                todo!();
+                // self.scan_defs_rec(*next)
+            }
+            Expr::FunDefn(defn, next) => {
+                // if name already exists, this error was already caught before. just continue
+                if fns.contains_key(&defn.name) {
+                    self.scan_defs_rec(*next, fns, adts, names)
+                } else {
+                    let id = *names.get(&defn.name).unwrap();
 
                     let new_params = defn
                         .params
@@ -383,7 +409,6 @@ impl Analyzer {
                             (
                                 p.name.to_string(),
                                 SParamDef {
-                                    // TODO: fix p.pos
                                     name: self.fresh_id(p.name.to_string(), p.nme_pos),
                                     ty: self.transform_type(&p.ty, p.nme_pos, &adts),
                                     pos: p.nme_pos,
@@ -408,7 +433,7 @@ impl Analyzer {
                     self.fun_defs.insert(id, defn);
                     let more_fns = fns.insert(nme.to_string(), id);
 
-                    let ret = self.scan_defs_rec(*next, more_fns, adts);
+                    let ret = self.scan_defs_rec(*next, more_fns, adts, names);
 
                     (
                         ExprPos {
@@ -421,7 +446,7 @@ impl Analyzer {
                 }
             }
             Expr::Sequence(e1, e2) => {
-                let ret = self.scan_defs_rec(*e2, fns, adts);
+                let ret = self.scan_defs_rec(*e2, fns, adts, names);
                 (
                     ExprPos {
                         expr: Expr::Sequence(e1, Box::new(ret.0)),
@@ -432,7 +457,7 @@ impl Analyzer {
                 )
             }
             Expr::Let(pd, expr, after) => {
-                let ret = self.scan_defs_rec(*after, fns, adts);
+                let ret = self.scan_defs_rec(*after, fns, adts, names);
                 (
                     ExprPos {
                         expr: Expr::Let(pd, expr, Box::new(ret.0)),
