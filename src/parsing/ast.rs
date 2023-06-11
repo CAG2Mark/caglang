@@ -11,8 +11,10 @@ pub struct ParamDef {
 }
 
 pub struct QualifiedName {
-    pub first: String,
-    pub nexts: Vec<String>,
+    pub scopes: Vec<(String, PositionRange)>,
+    pub name: String,
+    pub name_pos: PositionRange,
+    pub members: Vec<(String, PositionRange)>,
 }
 
 impl fmt::Display for QualifiedName {
@@ -20,9 +22,13 @@ impl fmt::Display for QualifiedName {
         write!(
             f,
             "{}",
-            self.nexts
+            self.members
                 .iter()
-                .fold(self.first.to_string(), |a, b| a + "." + b)
+                .fold(
+                    self.scopes
+                        .iter()
+                        .rfold(self.name.to_string(), |a, b| a + "::" + &b.0),
+                     |a, b| a + "." + &b.0)
         )
     }
 }

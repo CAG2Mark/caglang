@@ -186,7 +186,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
     // let keyword_re = Regex::new(r"def|if|elif|else|while|continue|break|match").unwrap();
     // { } [ ] ( ) => = . , _ :
-    let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|\.|,|_|:").unwrap();
+    let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|\.|,|_|::|:").unwrap();
     let ident_re = Regex::new(r"[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
     // let primitive_re = Regex::new(r"Int|Bool|String|Float|Unit").unwrap();
     let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+").unwrap();

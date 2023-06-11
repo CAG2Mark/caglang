@@ -287,6 +287,25 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             let msg = format!("duplicate variant name \x1b[1m{}\x1b[0m of ADT {}", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, 31)
         }
+        analyzer::AnalysisError::InvalidCtorError(pos) => {
+            let msg = format!("not a valid constructor");
+            print_error_at(file_name, input, "error", &pos, &msg, 31)
+        }
+        analyzer::AnalysisError::AdtNotFoundError(name, pos) => {
+            let msg = format!("could not find ADT \x1b[1m{}\x1b[0m", name);
+            print_error_at(file_name, input, "error", &pos, &msg, 31)
+        }
+        analyzer::AnalysisError::AdtVariantNotFoundError(name, variant, pos) => {
+            let msg = format!("ADT \x1b[1m{}\x1b[0m has no variant \x1b[1m{}\x1b[0m", name, variant);
+            print_error_at(file_name, input, "error", &pos, &msg, 31)
+        },
+        analyzer::AnalysisError::AdtNoBaseError(name, pos, hint_pos) => {
+            let hint_msg = format!("insert a \x1b[1mBase\x1b[0m variant");
+            print_error_at(file_name, input, "hint", &hint_pos, &hint_msg, 33);
+
+            let msg = format!("ADT \x1b[1m{}\x1b[0m has no default variant", name);
+            print_error_at(file_name, input, "error", &pos, &msg, 31)
+        },
     }
 }
 

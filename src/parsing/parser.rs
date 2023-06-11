@@ -684,7 +684,7 @@ impl Parser {
 
         let fn_def = self.parse_fn_def()?;
         let pos = union_posr(first_pos, self.last_tk_pos);
-        
+
         let after_maybe = self.parse_after_exprsep()?;
 
         let after = match after_maybe {
@@ -1032,22 +1032,39 @@ impl Parser {
     }
 
     fn parse_qualified_name(&mut self) -> Result<QualifiedName, ParseError> {
-        let first = self.skip_identifier(true)?.0.to_string();
+        let first = self.skip_identifier(true)?;
 
+        let mut scopes = self.parse_ids_sep("::", Some(first))?;
+        let members = self.parse_ids_sep(".", None)?;
+
+        let name = scopes.pop().unwrap();
+
+        Ok(QualifiedName {
+            scopes,
+            name: name.0,
+            name_pos: name.1,
+            members,
+        })
+    }
+
+    fn parse_ids_sep(&mut self, sep: &str, first: Option<(String, PositionRange)>) -> Result<Vec<(String, PositionRange)>, ParseError> {
         let mut front = self.peek_front(true);
 
-        let mut nexts: Vec<String> = Vec::new();
+        let mut ret: Vec<(String, PositionRange)> = match first {
+            Some(s) => vec![s],
+            None => Vec::new(),
+        };
 
         let mut cond = true;
 
         while cond {
             match &front {
                 Some(tk) => match &tk.tk {
-                    Delimiter(d) if d == "." => {
+                    Delimiter(d) if d == sep => {
                         self.consume(true);
-                        let next = self.skip_identifier(true)?.0;
+                        let next = self.skip_identifier(true)?;
 
-                        nexts.push(next);
+                        ret.push(next);
 
                         front = self.peek_front(true)
                     }
@@ -1057,7 +1074,7 @@ impl Parser {
             }
         }
 
-        Ok(QualifiedName { first, nexts })
+        Ok(ret)
     }
 
     // parse if elif else
@@ -1233,8 +1250,8 @@ impl Parser {
         let next = self.peek_front_strict(true)?;
 
         // Something => ...
-        if qn.nexts.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
-            return Ok(IdOrAdtPattern(qn.first));
+        if qn.members.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
+            return Ok(IdOrAdtPattern(qn.name));
         }
 
         let params = self.parse_patterns()?;

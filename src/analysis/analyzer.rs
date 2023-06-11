@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::zip;
 
-use crate::parsing::ast::Expr::*;
 use crate::parsing::ast::*;
 use crate::parsing::position::*;
 
@@ -14,7 +13,6 @@ use crate::util::union_find_int;
 use crate::util::union_find_int::UnionFindInt;
 
 use immutable_map::map::TreeMap;
-use immutable_map::set::TreeSet;
 
 type Identifier = u64;
 type Local = (Identifier, TypeOrVar);
@@ -76,11 +74,15 @@ pub enum AnalysisError {
     VariableRedefError(String, PositionRange, PositionRange), // name, offending position, original position
     DuplicateMemberError(String, String, PositionRange, PositionRange), // name, offending position, original position
     DuplicateVariantError(String, String, PositionRange, PositionRange), // name, offending position, original position
+    InvalidCtorError(PositionRange),
+    AdtNotFoundError(String, PositionRange),
+    AdtVariantNotFoundError(String, String, PositionRange), // adt name, adt variant name, position
+    AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
 }
 
 impl Analyzer {
     fn print_type(&self, ty: &TypeOrVar) {
-        let msg = match ty {
+        match ty {
             TypeOrVar::Ty(t) => match t {
                 SType::Top => println!("Top"),
                 SType::Primitve(p) => println!("{}", p),
@@ -222,12 +224,10 @@ impl Analyzer {
                 Type::UserType(t) => {
                     // TODO: FOR NOW just use the head. But later on this needs to be changed
                     // to support importing scopes/namespaces.
-                    let id = adts.get(&t.first);
+                    let id = adts.get(&t.name);
 
                     match id {
-                        Some(id) => {
-                            TypeOrVar::Ty(SType::UserType(*id))
-                        }
+                        Some(id) => TypeOrVar::Ty(SType::UserType(*id)),
                         _ => {
                             self.name_errors
                                 .push(AnalysisError::TypeNotFound(t.to_string(), ty.pos));
@@ -397,15 +397,13 @@ impl Analyzer {
                     self.scan_names(&next, more, adts)
                 }
             }
-            Expr::Sequence(e1, e2) => self.scan_names(&e2, fns, adts),
+            Expr::Sequence(_, e2) => self.scan_names(&e2, fns, adts),
             Expr::Let(_, _, after) => self.scan_names(&after, fns, adts),
             _ => (fns, adts),
         }
     }
 
-    fn convert_adt(&mut self, defn: AdtDef, adts: &AdtMap) -> Option<SAdtDef> {
-        let mut error = false;
-
+    fn convert_adt(&mut self, defn: AdtDef, adts: &AdtMap) -> SAdtDef {
         let id = self.fresh_id(defn.name.clone(), defn.name_pos);
 
         let mut name_map: HashMap<String, Identifier> = HashMap::new();
@@ -420,19 +418,21 @@ impl Analyzer {
         //    universal parameters may not clash
 
         // TODO: should refactor this, a lot of code is copied and pasted
-        
+
         // 1. scan universal names
         for p in defn.params {
             let maybe_pos = name_pos_map.get(&p.name);
             // name already used
             if maybe_pos.is_some() {
                 let n = maybe_pos.unwrap();
-                self.name_errors.push(
-                    AnalysisError::DuplicateMemberError(p.name, defn.name.clone(), p.nme_pos, *n)
-                );
-                error = true;
-                continue;
+                self.name_errors.push(AnalysisError::DuplicateMemberError(
+                    p.name.clone(),
+                    defn.name.clone(),
+                    p.nme_pos,
+                    *n,
+                ));
             }
+            // just continue and see what happens :)
 
             let id = self.fresh_id(p.name.clone(), p.nme_pos);
             let ty = self.transform_type(&p.ty, p.nme_pos, adts);
@@ -447,10 +447,25 @@ impl Analyzer {
             })
         }
 
-        let mut s_variants: Vec<SAdtVariant> = Vec::new();
+        let mut s_variants: HashMap<Identifier, SAdtVariant> = HashMap::new();
 
         let mut variant_name_map: HashMap<String, Identifier> = HashMap::new();
         let mut variant_pos_map: HashMap<String, PositionRange> = HashMap::new();
+
+        // if no variants, create a default one
+        if defn.variants.is_empty() {
+            let def_id = self.fresh_id("Base".to_string(), defn.name_pos);
+            variant_name_map.insert("Base".to_string(), def_id);
+
+            s_variants.insert(
+                def_id,
+                SAdtVariant {
+                    name: def_id,
+                    name_pos: defn.name_pos,
+                    params: vec![],
+                },
+            );
+        }
 
         // 2. scan variants, convert them too
         for v in defn.variants {
@@ -458,11 +473,12 @@ impl Analyzer {
             // name already used
             if maybe_pos.is_some() {
                 let n = maybe_pos.unwrap();
-                self.name_errors.push(
-                    AnalysisError::DuplicateVariantError(v.name, defn.name.clone(), v.name_pos, *n)
-                );
-                error = true;
-                continue;
+                self.name_errors.push(AnalysisError::DuplicateVariantError(
+                    v.name.clone(),
+                    defn.name.clone(),
+                    v.name_pos,
+                    *n,
+                ));
             }
 
             let id = self.fresh_id(v.name.clone(), v.name_pos);
@@ -483,26 +499,28 @@ impl Analyzer {
                 // name already used
                 if maybe_pos1.is_some() {
                     let n = maybe_pos1.unwrap();
-                    self.name_errors.push(
-                        AnalysisError::DuplicateMemberError(p.name, defn.name.clone(), p.nme_pos, *n)
-                    );
-                    error = true;
-                    continue;
+                    self.name_errors.push(AnalysisError::DuplicateMemberError(
+                        p.name.clone(),
+                        defn.name.clone(),
+                        p.nme_pos,
+                        *n,
+                    ));
                 } else if maybe_pos2.is_some() {
                     let n = maybe_pos2.unwrap();
-                    self.name_errors.push(
-                        AnalysisError::DuplicateMemberError(p.name, defn.name.clone(), p.nme_pos, *n)
-                    );
-                    error = true;
-                    continue;
+                    self.name_errors.push(AnalysisError::DuplicateMemberError(
+                        p.name.clone(),
+                        defn.name.clone(),
+                        p.nme_pos,
+                        *n,
+                    ));
                 }
-    
+
                 let id = self.fresh_id(p.name.clone(), p.nme_pos);
                 let ty = self.transform_type(&p.ty, p.nme_pos, adts);
-    
+
                 variant_int_name_map.insert(p.name.clone(), id);
                 variant_int_pos_map.insert(p.name.clone(), p.nme_pos);
-                
+
                 s_variant_params.push(SParamDef {
                     name: id,
                     ty,
@@ -511,21 +529,23 @@ impl Analyzer {
             }
 
             // create variant
-            if !error {
-                s_variants.push(SAdtVariant { name: id, name_pos: v.name_pos, params: s_variant_params })
-            }
+            s_variants.insert(
+                id,
+                SAdtVariant {
+                    name: id,
+                    name_pos: v.name_pos,
+                    params: s_variant_params,
+                },
+            );
         }
 
-        if !error {
-            Some(SAdtDef {
-                name: id,
-                params: s_params,
-                name_map,
-                variant_name_map,
-                variants: s_variants,
-            })
-        } else {
-            None
+        SAdtDef {
+            name: id,
+            name_pos: defn.name_pos,
+            params: s_params,
+            name_map,
+            variant_name_map,
+            variants: s_variants,
         }
     }
 
@@ -536,12 +556,8 @@ impl Analyzer {
                 let id = *adts.get(&defn.name).unwrap();
 
                 if !self.adt_defs.contains_key(&id) {
-                    match self.convert_adt(defn, adts) {
-                        Some(d) => {
-                            self.adt_defs.insert(id, d);
-                        },
-                        None => ()
-                    }
+                    let converted = self.convert_adt(defn, adts);
+                    self.adt_defs.insert(id, converted);
                 }
 
                 self.scan_defs_rec(*next, fns, adts)
@@ -607,6 +623,49 @@ impl Analyzer {
             }
             _ => e,
         }
+    }
+
+    fn convert_args(
+        &mut self,
+        args: Vec<ExprPos>,
+        types: &Vec<TypeOrVar>,
+        qn: &QualifiedName,
+        pos: PositionRange,
+        prev_locals: &LocalsMap,
+        locals: &LocalsMap,
+        fns: &FnMap,
+        adts: &AdtMap,
+    ) -> Option<Vec<SExprPos>> {
+        let args_len = types.len();
+
+        // check args length correct
+        if args.len() > args_len {
+            self.name_errors
+                .push(AnalysisError::TooManyArgsError(qn.name.clone(), pos));
+            return None;
+        }
+        if args.len() < args_len {
+            self.name_errors
+                .push(AnalysisError::TooFewArgsError(qn.name.clone(), pos));
+            return None;
+        }
+
+        // type check args
+        let mut transformed_args: Vec<Option<SExprPos>> = Vec::new();
+
+        for (arg, ty) in zip(args, types) {
+            // type checking occurs here
+            transformed_args.push(self.convert(arg, *ty, prev_locals, locals, fns, adts));
+        }
+
+        // transform options into exprs
+        let mut transformed_final: Vec<SExprPos> = Vec::new();
+
+        for e_ in transformed_args {
+            transformed_final.push(e_?)
+        }
+
+        Some(transformed_final)
     }
 
     pub fn convert_top(&mut self, e: ExprPos) -> Option<SExprPos> {
@@ -690,15 +749,18 @@ impl Analyzer {
                     .expr
             }
             Expr::Variable(nme) => {
+                // not yet implemented
+                if !nme.scopes.is_empty() {
+                    todo!();
+                }
+
                 // 1. Check if in locals map
                 // 2. Get local
-                let local = match get_local(&nme.first, prev_locals, locals) {
+                let local = match get_local(&nme.name, prev_locals, locals) {
                     Some(l) => l,
                     None => {
-                        self.name_errors.push(AnalysisError::LocalNotFoundError(
-                            nme.first.to_string(),
-                            pos,
-                        ));
+                        self.name_errors
+                            .push(AnalysisError::LocalNotFoundError(nme.name.to_string(), pos));
                         return None;
                     }
                 };
@@ -706,7 +768,7 @@ impl Analyzer {
                 // if ty is in type map, set
                 let ty = self.resolve_type(local.1);
 
-                match nme.nexts.first() {
+                match nme.members.first() {
                     None => {
                         self.add_constraint(expected, ty, pos); // we know its type, so add the constraint
                         SExpr::Variable(local.0, Vec::new())
@@ -720,7 +782,7 @@ impl Analyzer {
                                 // Get the adt def.
                                 let adt_def = self.get_adt_def(&id).unwrap();
                                 // Check if the member exists in the scope.
-                                let param_id_ = adt_def.name_map.get(next);
+                                let param_id_ = adt_def.name_map.get(&next.0);
 
                                 match param_id_ {
                                     Some(param_id) => {
@@ -740,7 +802,7 @@ impl Analyzer {
                                     None => {
                                         // error
                                         self.name_errors.push(AnalysisError::NoMemberError(
-                                            next.to_string(),
+                                            next.0.to_string(),
                                             pos,
                                         ));
                                         return None;
@@ -749,7 +811,7 @@ impl Analyzer {
                             }
                             TypeOrVar::Ty(SType::Primitve(_)) | TypeOrVar::Ty(SType::Top) => {
                                 self.name_errors
-                                    .push(AnalysisError::NoMemberError(next.to_string(), pos));
+                                    .push(AnalysisError::NoMemberError(next.0.to_string(), pos));
                                 return None;
                             }
                             TypeOrVar::Var(_, pos) => {
@@ -762,11 +824,11 @@ impl Analyzer {
             }
             Expr::Call(qn, args) => {
                 // get id, then def
-                let fun_id = *match fns.get(&qn.first) {
+                let fun_id = *match fns.get(&qn.name) {
                     Some(id) => id,
                     None => {
                         self.name_errors
-                            .push(AnalysisError::FnNotFoundError(qn.first, pos));
+                            .push(AnalysisError::FnNotFoundError(qn.name, pos));
                         return None;
                     }
                 };
@@ -775,58 +837,118 @@ impl Analyzer {
                     Some(f) => f,
                     None => {
                         self.name_errors
-                            .push(AnalysisError::FnNotFoundError(qn.first, pos));
+                            .push(AnalysisError::FnNotFoundError(qn.name, pos));
                         return None;
                     }
                 };
 
-                let args_len = fun_def.params.len();
-
-                // check args length correct
-                if args.len() > args_len {
-                    self.name_errors
-                        .push(AnalysisError::TooManyArgsError(qn.first, pos));
-                    return None;
-                }
-                if args.len() < args_len {
-                    self.name_errors
-                        .push(AnalysisError::TooFewArgsError(qn.first, pos));
-                    return None;
-                }
-
-                // type check args
-                let mut transformed_args: Vec<Option<SExprPos>> = Vec::new();
-
-                let types: Vec<TypeOrVar> = fun_def.params.iter().map(|p| p.1.ty).collect();
-
                 let ret_type = fun_def.ty;
 
-                for (arg, ty) in zip(args, types) {
-                    // type checking occurs here
-                    transformed_args.push(self.convert(arg, ty, prev_locals, locals, fns, adts));
+                let mut types: Vec<TypeOrVar> = vec![];
+
+                for p in &fun_def.params {
+                    types.push(p.1.ty);
                 }
 
-                // transform options into exprs
-                let mut transformed_final: Vec<SExprPos> = Vec::new();
-
-                for e_ in transformed_args {
-                    transformed_final.push(e_?)
-                }
+                let transformed_args =
+                    self.convert_args(args, &types, &qn, e.pos, prev_locals, locals, fns, adts);
 
                 // add type constraint
                 self.add_constraint(expected, ret_type, pos);
 
                 // transform function
-                self.transform_fn(qn.first, pos, prev_locals, fns, adts);
+                self.transform_fn(qn.name, pos, prev_locals, fns, adts);
 
                 // println!("Ret type:");
                 // self.print_type(&self.resolve_type(ret_type));
                 // println!("First arg type:")
                 // self.print_type(&self.resolve_type(func.ty));
 
-                SExpr::Call(fun_id, transformed_final)
+                SExpr::Call(fun_id, transformed_args?)
             }
-            Expr::Ctor(_, _) => todo!(),
+            Expr::Ctor(qn, args) => {
+                // NOTE: Adt() actually calls Adt::Base(). We need to handle this.
+
+                // no support for importing scopes yet
+                if qn.scopes.len() >= 2 {
+                    todo!();
+                }
+
+                let adt_name = if qn.scopes.len() == 0 {
+                    (qn.name.clone(), qn.name_pos)
+                } else {
+                    qn.scopes.last().unwrap().clone()
+                };
+
+                let ctor_name = if qn.scopes.len() == 0 {
+                    ("Base".to_string(), qn.name_pos)
+                } else {
+                    (qn.name.clone(), qn.name_pos)
+                };
+
+                // resolve name of adt
+                let adt_id = *match adts.get(&adt_name.0) {
+                    Some(id) => id,
+                    None => {
+                        // error
+                        self.name_errors
+                            .push(AnalysisError::AdtNotFoundError(adt_name.0, adt_name.1));
+                        return None;
+                    }
+                };
+
+                let adt_def = self.adt_defs.get(&adt_id).unwrap();
+
+                // resolve ctor
+                let ctor_id = *match adt_def.variant_name_map.get(&ctor_name.0) {
+                    Some(id) => id,
+                    None => {
+                        // error
+
+                        if qn.scopes.len() == 0 {
+                            self.name_errors
+                                .push(AnalysisError::AdtNoBaseError(
+                                    adt_name.0,
+                                    adt_name.1,
+                                    adt_def.name_pos
+                                ));
+                        } else {
+                            self.name_errors
+                                .push(AnalysisError::AdtVariantNotFoundError(
+                                    adt_name.0,
+                                    ctor_name.0,
+                                    ctor_name.1,
+                                ));
+                        }
+                        return None;
+                    }
+                };
+
+                let ctor = adt_def.variants.get(&ctor_id).unwrap();
+
+                // check args
+                let mut types: Vec<TypeOrVar> = vec![];
+
+                // 1. build types
+                for p in &adt_def.params {
+                    types.push(p.ty);
+                }
+
+                for p in &ctor.params {
+                    types.push(p.ty);
+                }
+
+                // 2. convert args
+                let transformed_args =
+                    self.convert_args(args, &types, &qn, e.pos, prev_locals, locals, fns, adts);
+
+                // 3. check type
+                let ctor_type = TypeOrVar::Ty(SType::UserType(adt_id));
+
+                self.add_constraint(expected, ctor_type, e.pos);
+
+                SExpr::Ctor(adt_id, ctor_id, transformed_args?)
+            }
             Expr::Sequence(e1, e2) => {
                 let e1 = self.convert(
                     *e1,

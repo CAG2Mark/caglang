@@ -40,10 +40,11 @@ pub struct SAdtVariant {
 
 pub struct SAdtDef {
     pub name: Identifier,
+    pub name_pos: PositionRange,
     pub params: Vec<SParamDef>,
     pub name_map: HashMap<String, Identifier>,
     pub variant_name_map: HashMap<String, Identifier>,
-    pub variants: Vec<SAdtVariant>,
+    pub variants: HashMap<Identifier, SAdtVariant>,
 }
 
 pub enum SPattern {
@@ -66,7 +67,7 @@ pub enum SExpr {
     Nested(Box<SExprPos>),
     Variable(Identifier, Vec<Identifier>),
     Call(Identifier, Vec<SExprPos>),
-    Ctor(Identifier, Vec<SExprPos>),
+    Ctor(Identifier, Identifier, Vec<SExprPos>), // adt id, variant id
     Sequence(Box<SExprPos>, Box<SExprPos>),
     Ite(
         Box<SExprPos>,
