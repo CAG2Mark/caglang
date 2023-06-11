@@ -9,7 +9,7 @@ type Identifier = u64;
 pub enum SType {
     Top,
     Primitve(Prim),
-    UserType(Identifier)
+    UserType(Identifier),
 }
 
 #[derive(Clone, Copy)]
@@ -20,29 +20,29 @@ pub enum TypeOrVar {
 
 pub struct SParamDef {
     pub name: Identifier,
-    pub ty: TypeOrVar, 
-    pub pos: PositionRange
+    pub ty: TypeOrVar,
+    pub pos: PositionRange,
 }
 
 pub struct SFunDef {
-    pub name: Identifier, 
+    pub name: Identifier,
     pub name_pos: PositionRange,
-    pub ty: TypeOrVar, 
-    pub params: Vec<SParamDef>, 
-    pub body: Box<SExprPos>
+    pub ty: TypeOrVar,
+    pub params: Vec<SParamDef>,
+    pub body: Box<SExprPos>,
 }
 
 pub struct SAdtVariant {
     pub name: Identifier,
     pub name_pos: PositionRange,
-    pub params: Vec<SParamDef>
+    pub params: Vec<SParamDef>,
 }
 
 pub struct SAdtDef {
     pub name: Identifier,
     pub params: Vec<SParamDef>,
     pub name_map: HashMap<String, Identifier>,
-    pub variants: Vec<SAdtVariant>
+    pub variants: Vec<SAdtVariant>,
 }
 
 pub enum SPattern {
@@ -52,12 +52,12 @@ pub enum SPattern {
     FloatLiteralPattern(f64),
     StringLiteralPattern(String),
     BoolLiteralPattern(bool),
-    AdtPattern(Identifier, Vec<SPattern>)
+    AdtPattern(Identifier, Vec<SPattern>),
 }
 
 pub struct SMatchCase {
     pub pat: SPattern,
-    pub body: SExprPos
+    pub body: SExprPos,
 }
 
 pub enum SExpr {
@@ -67,7 +67,12 @@ pub enum SExpr {
     Call(Identifier, Vec<SExprPos>),
     Ctor(Identifier, Vec<SExprPos>),
     Sequence(Box<SExprPos>, Box<SExprPos>),
-    Ite(Box<SExprPos>, Box<SExprPos>, Vec<(Box<SExprPos>, Box<SExprPos>)>, Option<Box<SExprPos>>), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
+    Ite(
+        Box<SExprPos>,
+        Box<SExprPos>,
+        Vec<(Box<SExprPos>, Box<SExprPos>)>,
+        Option<Box<SExprPos>>,
+    ), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
     Match(Box<SExprPos>, Vec<SMatchCase>), // scrutinee, matches
     While(Box<SExprPos>, Box<SExprPos>),
     IntLit(i64),
@@ -76,12 +81,12 @@ pub enum SExpr {
     BoolLit(bool),
     UnitLit,
     Infix(String, Box<SExprPos>, Box<SExprPos>), // Op, left, right
-    Prefix(String, Box<SExprPos>), // Op, expr
+    Prefix(String, Box<SExprPos>),               // Op, expr
     Let(SParamDef, Box<SExprPos>, Box<SExprPos>), // let x (: Type)? = first <ExprSep> second
     AssignmentOp(String, Box<SExprPos>, Box<SExprPos>, Box<SExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
 }
 
 pub struct SExprPos {
     pub expr: SExpr,
-    pub pos: PositionRange
+    pub pos: PositionRange,
 }

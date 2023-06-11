@@ -1,17 +1,17 @@
-pub mod parsing;
 pub mod analysis;
+pub mod parsing;
 pub mod util;
 
 use analysis::analyzer;
-use parsing::lexer;
-use parsing::tokens;
-use parsing::parser;
 use parsing::ast;
+use parsing::lexer;
+use parsing::parser;
+use parsing::tokens;
 
 use crate::parsing::position::*;
 
-use std::io::prelude::*;
 use std::fs::File;
+use std::io::prelude::*;
 
 use std::env;
 
@@ -26,7 +26,7 @@ fn first_non_whitespace(input: &String, start: usize) -> Option<usize> {
 
     match input[start..].find(|c| c != ' ' && c != '\t') {
         Some(v) => Some(v + start),
-        None => None
+        None => None,
     }
 }
 
@@ -37,7 +37,7 @@ fn last_non_whitespace(input: &String, end: usize) -> Option<usize> {
 
     match input[..end].rfind(|c| c != ' ' && c != '\t') {
         Some(v) => Some(v + 1),
-        None => None
+        None => None,
     }
 }
 
@@ -49,7 +49,7 @@ fn print_ln_carets(input: &String, ln: usize, start: usize, end: usize, color: u
 
     let end_pos = match last_non_whitespace(input, end) {
         Some(v) => v,
-        None => end
+        None => end,
     };
 
     print_ln(input, ln);
@@ -71,13 +71,28 @@ fn print_ln_carets(input: &String, ln: usize, start: usize, end: usize, color: u
     print!("\n");
 }
 
-fn print_error_at(file_name: &String, input: &String, severity: &str, pos: &PositionRange, msg: &str, color: u32) {
-    println!("{}:{}:{}", file_name, pos.start.line_no + 1, pos.start.pos + 1);
-    
+fn print_error_at(
+    file_name: &String,
+    input: &String,
+    severity: &str,
+    pos: &PositionRange,
+    msg: &str,
+    color: u32,
+) {
+    println!(
+        "{}:{}:{}",
+        file_name,
+        pos.start.line_no + 1,
+        pos.start.pos + 1
+    );
+
     let chunks: Vec<&str> = input.lines().collect();
 
     if pos.start.line_no > 0 {
-        print_ln(&chunks.get(pos.start.line_no - 1).unwrap().to_string(), pos.start.line_no - 1);
+        print_ln(
+            &chunks.get(pos.start.line_no - 1).unwrap().to_string(),
+            pos.start.line_no - 1,
+        );
     }
 
     let start_ln = pos.start.line_no;
@@ -111,18 +126,18 @@ fn print_error_at(file_name: &String, input: &String, severity: &str, pos: &Posi
 
         last_start = match first_non_whitespace(&last_ln, 0) {
             Some(v) => v,
-            None => 0
+            None => 0,
         };
     } else {
         last_start = match first_non_whitespace(&last_ln, pos.start.pos) {
             Some(v) => v,
-            None => 0
+            None => 0,
         };
     }
 
     last_end = match last_non_whitespace(&last_ln, pos.end.pos) {
         Some(v) => v,
-        None => last_ln.len() - 1
+        None => last_ln.len() - 1,
     };
 
     // determine best position to print error msg
@@ -130,48 +145,47 @@ fn print_error_at(file_name: &String, input: &String, severity: &str, pos: &Posi
 
     let l = (msg.len() + severity.len() + 2) / 2;
 
-    start = if start >= l { start - l } else { 0 }; 
+    start = if start >= l { start - l } else { 0 };
     print!("      ");
     for _ in 0..start {
         print!(" ")
     }
 
     print!("\x1b[1;{}m{}\x1b[0m: {}\n", color, severity, msg);
-    
 }
 
 fn expected_to_str(expected: Vec<String>) -> String {
     let mut ret = "".to_string();
     ret += match expected.first() {
         Some(s) => s,
-        None => unreachable!()
+        None => unreachable!(),
     };
 
     if expected.len() == 1 {
-        return ret
+        return ret;
     }
 
     for i in 1..expected.len() - 1 {
         ret += ", ".as_ref();
         ret += match expected.get(i) {
             Some(s) => s,
-            None => unreachable!()
+            None => unreachable!(),
         };
     }
-    
+
     ret += " or ".as_ref();
     ret += match expected.last() {
         Some(s) => s,
-        None => unreachable!()
+        None => unreachable!(),
     };
 
-    return ret
+    return ret;
 }
 
 fn single_posrange(line_no: usize, pos: usize) -> PositionRange {
     PositionRange {
         start: Position { line_no, pos },
-        end: Position { line_no, pos }
+        end: Position { line_no, pos },
     }
 }
 
@@ -180,7 +194,11 @@ fn print_parse_error(file_name: &String, input: &String, error: parser::ParseErr
 
     match error {
         parser::ParseError::UnexpectedToken(got, expected, pos) => {
-            let msg = format!("unexpected token {}, possible token(s) contain {}", got, expected_to_str(expected));
+            let msg = format!(
+                "unexpected token {}, possible token(s) contain {}",
+                got,
+                expected_to_str(expected)
+            );
             print_error_at(file_name, input, "fatal", &pos, &msg, 31)
         }
         parser::ParseError::UnexpectedEOF(expected) => {
@@ -193,7 +211,10 @@ fn print_parse_error(file_name: &String, input: &String, error: parser::ParseErr
             }
             let pos = lexer::string_index_to_pos(&chunks, input.len() - 1);
             let pos_new = single_posrange(pos.line_no, pos.pos + 1);
-            let msg = format!("unexpected end of file, possible token(s) contain {}", expected_to_str(expected));
+            let msg = format!(
+                "unexpected end of file, possible token(s) contain {}",
+                expected_to_str(expected)
+            );
             print_error_at(file_name, input, "fatal", &pos_new, &msg, 31)
         }
         parser::ParseError::UnexpectedEOFOther => {
@@ -212,20 +233,23 @@ fn print_parse_error(file_name: &String, input: &String, error: parser::ParseErr
 fn print_analysis_error(file_name: &String, input: &String, error: analyzer::AnalysisError) {
     match error {
         analyzer::AnalysisError::LocalNotFoundError(name, pos) => {
-            let msg = format!("use of possibly unbound local variable \x1b[1m{}\x1b[0m", name);
+            let msg = format!(
+                "use of possibly unbound local variable \x1b[1m{}\x1b[0m",
+                name
+            );
             print_error_at(file_name, input, "error", &pos, &msg, 31)
-        },
+        }
         analyzer::AnalysisError::NoMemberError(name, pos) => {
             let msg = format!("member \x1b[1m{}\x1b[0m does not exist", name);
             print_error_at(file_name, input, "error", &pos, &msg, 31)
         }
         analyzer::AnalysisError::VariableRedefError(name, offending, original) => {
-            let hint_msg= format!("local \x1b[1m{}\x1b[0m originally defined here", name);
+            let hint_msg = format!("local \x1b[1m{}\x1b[0m originally defined here", name);
             print_error_at(file_name, input, "hint", &original, &hint_msg, 33);
 
             let msg = format!("redefinition of local variable \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &offending, &msg, 31)
-        },
+        }
         analyzer::AnalysisError::TypeNotFound(ty, pos) => {
             let msg = format!("type \x1b[1m{}\x1b[0m not found", ty);
             print_error_at(file_name, input, "error", &pos, &msg, 31)
@@ -233,17 +257,17 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         analyzer::AnalysisError::FnNotFoundError(name, pos) => {
             let msg = format!("could not find function \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &pos, &msg, 31)
-        },
+        }
         analyzer::AnalysisError::TooManyArgsError(name, pos) => {
             let msg = format!("too many arguments for function \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &pos, &msg, 31);
-        },
+        }
         analyzer::AnalysisError::TooFewArgsError(name, pos) => {
             let msg = format!("not enough arguments for function \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &pos, &msg, 31);
-        },
+        }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
-            let hint_msg= format!("name \x1b[1m{}\x1b[0m originally used", name);
+            let hint_msg = format!("name \x1b[1m{}\x1b[0m originally used", name);
             print_error_at(file_name, input, "hint", &original, &hint_msg, 33);
 
             let msg = format!("name \x1b[1m{}\x1b[0m is already used", name);
@@ -257,11 +281,14 @@ fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeErr
         analyzer::TypeError::TypeNeededError(pos) => {
             let msg = format!("type annotation needed for this variable");
             print_error_at(file_name, input, "error", &pos, &msg, 31)
-        },
+        }
         analyzer::TypeError::TypeMismatch(t1, t2, pos) => {
-            let msg = format!("expected type \x1b[1m{}\x1b[0m, got \x1b[1m{}\x1b[0m", t1, t2);
+            let msg = format!(
+                "expected type \x1b[1m{}\x1b[0m, got \x1b[1m{}\x1b[0m",
+                t1, t2
+            );
             print_error_at(file_name, input, "error", &pos, &msg, 31)
-        },
+        }
     }
 }
 
@@ -273,10 +300,10 @@ fn file_to_string(file_name: &str) -> Option<String> {
             let mut contents = String::new();
             match f.read_to_string(&mut contents) {
                 Ok(_) => Some(contents),
-                Err(_) => None
+                Err(_) => None,
             }
         }
-        Err(_) => None
+        Err(_) => None,
     }
 }
 
@@ -290,7 +317,7 @@ fn main() {
             std::process::exit(1)
         }
     };
-    
+
     let read = file_to_string(file_name);
     let contents = match read {
         Some(contents) => contents,
@@ -298,12 +325,21 @@ fn main() {
             println!("Could not open file.");
             std::process::exit(1)
         }
-    }.trim_end().to_string();
-    
+    }
+    .trim_end()
+    .to_string();
+
     let tokens = match lexer::lex(&contents) {
         Ok(tokens) => tokens,
         Err(pos) => {
-            print_error_at(file_name, &contents, "fatal", &single_posrange(pos.line_no, pos.pos), "invalid token", 31);
+            print_error_at(
+                file_name,
+                &contents,
+                "fatal",
+                &single_posrange(pos.line_no, pos.pos),
+                "invalid token",
+                31,
+            );
             std::process::exit(1)
         }
     };
@@ -325,7 +361,7 @@ fn main() {
         Some(_) => {
             // println!("Name Analysis OK")
         }
-        None => ()
+        None => (),
     };
     println!();
 

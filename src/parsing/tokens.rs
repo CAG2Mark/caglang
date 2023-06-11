@@ -35,7 +35,7 @@ pub enum Prim {
     Float,
     String,
     Bool,
-    Unit
+    Unit,
 }
 
 impl fmt::Display for Prim {
@@ -64,12 +64,12 @@ pub enum Token {
     Whitespace,
     Comment,
     ImplicitExprSep,
-    ExplicitExprSep
+    ExplicitExprSep,
 }
 
 pub struct TokenPos {
     pub tk: Token,
-    pub pos: PositionRange
+    pub pos: PositionRange,
 }
 
 pub static IDENT_STR: &str = "<Identifier>";
@@ -98,7 +98,7 @@ impl Token {
             Token::Whitespace => WHITESPACE_STR.to_string(),
             Token::Comment => COMMENT_STR.to_string(),
             Token::ImplicitExprSep => IMPLICIT_EXPRSEP_STR.to_string(),
-            Token::ExplicitExprSep => EXPLICIT_EXPRSEP_STR.to_string()
+            Token::ExplicitExprSep => EXPLICIT_EXPRSEP_STR.to_string(),
         }
     }
 }

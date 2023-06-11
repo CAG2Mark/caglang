@@ -7,19 +7,17 @@ use crate::parsing::position::*;
 
 fn try_parse(regex: &Regex, input: &String, pos: usize) -> Option<String> {
     match regex.captures_at(input, pos) {
-        Some(captures) => {
-            match captures.get(0) {
-                Some(matched) => {
-                    if matched.start() != pos {
-                        None
-                    } else {
-                        Some(matched.as_str().to_string())
-                    }
+        Some(captures) => match captures.get(0) {
+            Some(matched) => {
+                if matched.start() != pos {
+                    None
+                } else {
+                    Some(matched.as_str().to_string())
                 }
-                None => None
             }
-        }
-        None => None
+            None => None,
+        },
+        None => None,
     }
 }
 
@@ -30,7 +28,10 @@ pub fn string_index_to_pos(spl: &Vec<&str>, pos: usize) -> Position {
         explored += ln.len();
         if explored > pos {
             explored -= ln.len() + 1;
-            return Position { line_no: line, pos: pos - explored }
+            return Position {
+                line_no: line,
+                pos: pos - explored,
+            };
         }
         line += 1;
         explored += 1; // account for newline character
@@ -42,7 +43,7 @@ pub fn string_index_to_pos(spl: &Vec<&str>, pos: usize) -> Position {
 /*
 fn delimiter_convert(delim: &str) -> DelimiterType {
     use crate::tokens::DelimiterType::*;
-    // { } [ ] ( ) => = . , _ 
+    // { } [ ] ( ) => = . , _
     match delim {
         "{" => CurlyOpen,
         "}" => CurlyClose,
@@ -82,7 +83,7 @@ fn float_lit_convert(val: String) -> f64 {
     } else {
         val
     };
-        
+
     trimmed.parse::<f64>().unwrap()
 }
 
@@ -103,14 +104,15 @@ fn int_lit_convert(val: String) -> i64 {
 
 fn string_lit_convert(val: String) -> Result<String, usize> {
     let mut ret = "".to_string();
-    let trimmed = val[1..val.len()-1].to_string();
-    
-    if !trimmed.contains("\\") { // no need to unescape
+    let trimmed = val[1..val.len() - 1].to_string();
+
+    if !trimmed.contains("\\") {
+        // no need to unescape
         return Ok(trimmed);
     }
 
     let len = val.len() - 2;
-    let read : Vec<char> = trimmed.chars().collect();
+    let read: Vec<char> = trimmed.chars().collect();
 
     let mut i = 0;
     while i < len {
@@ -132,7 +134,7 @@ fn string_lit_convert(val: String) -> Result<String, usize> {
             't' => '\t',
             'r' => '\r',
             '"' => '\"',
-            _ => return Err(i + 1)
+            _ => return Err(i + 1),
         };
 
         ret.push(push);
@@ -142,10 +144,14 @@ fn string_lit_convert(val: String) -> Result<String, usize> {
     Ok(ret)
 }
 
-const KEYWORDS: &'static [&'static str] = &["def", "if", "elif", "else", "while", "continue", "break", "match", "let", "adt", "new"];
+const KEYWORDS: &'static [&'static str] = &[
+    "def", "if", "elif", "else", "while", "continue", "break", "match", "let", "adt", "new",
+];
 const PRIMS: &'static [&'static str] = &["Int", "Bool", "String", "Float", "Unit"];
 const BOOL_LIT: &'static [&'static str] = &["true", "false"];
-const OPERATORS: &'static [&'static str] = &["+","-","*","/","%","!","!=","||","&&","==","<","<=",">",">="];
+const OPERATORS: &'static [&'static str] = &[
+    "+", "-", "*", "/", "%", "!", "!=", "||", "&&", "==", "<", "<=", ">", ">=",
+];
 const ASSIGNMENT_OPS: &'static [&'static str] = &["+=", "-=", "*=", "/=", "%=", "||=", "&&=", "="];
 
 pub fn prim_str_to_type(cand: &str) -> Prim {
@@ -155,7 +161,7 @@ pub fn prim_str_to_type(cand: &str) -> Prim {
         "Float" => Prim::Float,
         "String" => Prim::String,
         "Unit" => Prim::Unit,
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -171,14 +177,13 @@ pub fn handle_reserved(cand: &str) -> Token {
     }
 }
 
-
 pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let mut ret: Vec<TokenPos> = Vec::new();
 
     let mut progress = true;
 
     let mut pos = 0;
-    
+
     // let keyword_re = Regex::new(r"def|if|elif|else|while|continue|break|match").unwrap();
     // { } [ ] ( ) => = . , _ :
     let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|\.|,|_|:").unwrap();
@@ -187,16 +192,18 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+").unwrap();
     let float_literal_re = Regex::new(r"\d+(?:\.\d+f?|f)").unwrap();
     let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
-    let operator_re = Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=|=").unwrap();
+    let operator_re =
+        Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=|=").unwrap();
     // can "escape" away new lines using \
     let whitespace_re = Regex::new(r"( |\t)+|\\( |\t)*\n( |\t)*").unwrap();
     // semicolon with new lines or whitespace around it
-    let explicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*;(?: |\t|\n)*|;(?: |\t|\n)*").unwrap();
+    let explicit_exprsep_re =
+        Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*;(?: |\t|\n)*|;(?: |\t|\n)*").unwrap();
     // at least one new new line with whitespace around it
     let implicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*").unwrap();
     let comment_re = Regex::new(r"#[^\n]*").unwrap();
-    
-    // order: 
+
+    // order:
     //  float literal
     //  int, bool literal
     //  string literal
@@ -222,10 +229,13 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 pos += val.len();
 
                 let p2 = string_index_to_pos(&spl, pos - 1);
-                
-                ret.push(TokenPos { tk: Token::FloatLiteral(float_lit_convert(val)), pos: union_pos(file_pos, p2) });
+
+                ret.push(TokenPos {
+                    tk: Token::FloatLiteral(float_lit_convert(val)),
+                    pos: union_pos(file_pos, p2),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -237,9 +247,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
                 let p2 = string_index_to_pos(&spl, pos - 1);
 
-                ret.push(TokenPos { tk: Token::IntLiteral(int_lit_convert(val)), pos: union_pos(file_pos, p2) });
+                ret.push(TokenPos {
+                    tk: Token::IntLiteral(int_lit_convert(val)),
+                    pos: union_pos(file_pos, p2),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -253,15 +266,15 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
                 match string_lit_convert(val) {
                     Ok(s) => {
-                        ret.push(TokenPos { tk: Token::StringLiteral(s), pos: union_pos(file_pos, p2) });
+                        ret.push(TokenPos {
+                            tk: Token::StringLiteral(s),
+                            pos: union_pos(file_pos, p2),
+                        });
                         progress = true;
-                        continue
+                        continue;
                     }
-                    Err(pos2) => { 
-                        return Err(string_index_to_pos(&spl, pos + pos2)) 
-                    }
+                    Err(pos2) => return Err(string_index_to_pos(&spl, pos + pos2)),
                 }
-                
             }
             None => {}
         }
@@ -272,9 +285,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 pos += val.len();
                 let p2 = string_index_to_pos(&spl, pos - 1);
 
-                ret.push(TokenPos { tk: Token::Delimiter(val), pos: union_pos(file_pos, p2) });
+                ret.push(TokenPos {
+                    tk: Token::Delimiter(val),
+                    pos: union_pos(file_pos, p2),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -291,9 +307,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                     Token::AssignmentOperator(val)
                 };
 
-                ret.push(TokenPos { tk, pos: union_pos(file_pos, p2) });
+                ret.push(TokenPos {
+                    tk,
+                    pos: union_pos(file_pos, p2),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -303,9 +322,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 pos += val.len();
                 let p2 = string_index_to_pos(&spl, pos - 1);
 
-                ret.push(TokenPos { tk: handle_reserved(&val.to_string()), pos: union_pos(file_pos, p2) });
+                ret.push(TokenPos {
+                    tk: handle_reserved(&val.to_string()),
+                    pos: union_pos(file_pos, p2),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -319,9 +341,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 let inner_pos = val.find(";").unwrap();
                 let pos = string_index_to_pos(&spl, pos_temp + inner_pos);
 
-                ret.push(TokenPos { tk: Token::ExplicitExprSep, pos: union_pos(pos, pos)});
+                ret.push(TokenPos {
+                    tk: Token::ExplicitExprSep,
+                    pos: union_pos(pos, pos),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -331,9 +356,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             Some(val) => {
                 pos += val.len();
 
-                ret.push(TokenPos { tk: Token::ImplicitExprSep, pos: union_pos(file_pos, file_pos) });
+                ret.push(TokenPos {
+                    tk: Token::ImplicitExprSep,
+                    pos: union_pos(file_pos, file_pos),
+                });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -347,7 +375,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 // ignore whitespace.
                 // ret.push(TokenPos { tk: Token::Whitespace, pos: file_pos });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -360,7 +388,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
                 // ret.push(TokenPos { tk: Token::Comment, pos: file_pos });
                 progress = true;
-                continue
+                continue;
             }
             None => {}
         }
@@ -372,4 +400,3 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         Err(string_index_to_pos(&spl, pos))
     }
 }
-
