@@ -17,6 +17,22 @@ pub struct QualifiedName {
     pub members: Vec<(String, PositionRange)>,
 }
 
+impl QualifiedName {
+    pub fn get_pos(&self) -> PositionRange {
+        let first = match self.scopes.first() {
+            Some(first) => first.1,
+            None => self.name_pos,
+        };
+
+        let last = match self.members.last() {
+            Some(last) => last.1,
+            none => self.name_pos,
+        };
+
+        union_posr(first, last)
+    }
+}
+
 impl fmt::Display for QualifiedName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -73,6 +89,11 @@ pub struct AdtDef {
     pub variants: Vec<AdtVariant>,
 }
 
+pub struct PatternPos {
+    pub pat: Pattern,
+    pub pos: PositionRange
+}
+
 pub enum Pattern {
     WildcardPattern,
     IdOrAdtPattern(String), // cannot distinguish between IDs and ADT variants with no parameters
@@ -80,11 +101,11 @@ pub enum Pattern {
     FloatLiteralPattern(f64),
     StringLiteralPattern(String),
     BoolLiteralPattern(bool),
-    AdtPattern(QualifiedName, Vec<Pattern>),
+    AdtPattern(QualifiedName, Vec<PatternPos>),
 }
 
 pub struct MatchCase {
-    pub pat: Pattern,
+    pub pat: PatternPos,
     pub body: ExprPos,
 }
 
@@ -150,13 +171,13 @@ pub fn format_param_dfs(p: &Vec<ParamDef>) -> String {
     format!("({})", inner)
 }
 
-pub fn format_patterns(p: &Vec<Pattern>) -> String {
+pub fn format_patterns(p: &Vec<PatternPos>) -> String {
     let inner = format_sep(&p.iter().map(|x| format_pattern(x)).collect(), ", ");
     format!("({inner})")
 }
 
-pub fn format_pattern(v: &Pattern) -> String {
-    match v {
+pub fn format_pattern(v: &PatternPos) -> String {
+    match &v.pat {
         Pattern::WildcardPattern => "_".to_string(),
         Pattern::IdOrAdtPattern(id) => id.to_string(),
         Pattern::IntLiteralPattern(val) => val.to_string(),

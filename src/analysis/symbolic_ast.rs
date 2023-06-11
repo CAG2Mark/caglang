@@ -47,6 +47,11 @@ pub struct SAdtDef {
     pub variants: HashMap<Identifier, SAdtVariant>,
 }
 
+pub struct SPatternPos {
+    pat: SPattern,
+    pos: PositionRange
+}
+
 pub enum SPattern {
     WildcardPattern,
     IdOrAdtPattern(Identifier), // cannot distinguish between IDs and ADT variants with no parameters
@@ -54,11 +59,11 @@ pub enum SPattern {
     FloatLiteralPattern(f64),
     StringLiteralPattern(String),
     BoolLiteralPattern(bool),
-    AdtPattern(Identifier, Vec<SPattern>),
+    AdtPattern(Identifier, Vec<SPatternPos>),
 }
 
 pub struct SMatchCase {
-    pub pat: SPattern,
+    pub pat: SPatternPos,
     pub body: SExprPos,
 }
 

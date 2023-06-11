@@ -1197,7 +1197,7 @@ impl Parser {
         Ok(MatchCase { pat: pattern, body })
     }
 
-    fn parse_pattern(&mut self) -> Result<Pattern, ParseError> {
+    fn parse_pattern(&mut self) -> Result<PatternPos, ParseError> {
         let front = self.peek_front_strict(true)?;
         let pos = front.pos.to_owned();
 
@@ -1213,28 +1213,28 @@ impl Parser {
         match &front.tk {
             Delimiter(d) if d == "_" => {
                 self.consume(true);
-                Ok(WildcardPattern)
+                Ok(PatternPos { pat: WildcardPattern, pos })
             }
             Identifier(_) => self.parse_id_pattern(),
             IntLiteral(val) => {
-                let ret = Ok(IntLiteralPattern(*val));
+                let ret = IntLiteralPattern(*val);
                 self.consume(true);
-                ret
+                Ok(PatternPos { pat: ret, pos })
             }
             FloatLiteral(val) => {
-                let ret = Ok(FloatLiteralPattern(*val));
+                let ret = FloatLiteralPattern(*val);
                 self.consume(true);
-                ret
+                Ok(PatternPos { pat: ret, pos })
             }
             StringLiteral(val) => {
-                let ret = Ok(StringLiteralPattern(val.to_string()));
+                let ret = StringLiteralPattern(val.to_string());
                 self.consume(true);
-                ret
+                Ok(PatternPos { pat: ret, pos })
             }
             BoolLiteral(val) => {
-                let ret = Ok(BoolLiteralPattern(*val));
+                let ret = BoolLiteralPattern(*val);
                 self.consume(true);
-                ret
+                Ok(PatternPos { pat: ret, pos })
             }
             _ => Err(ParseError::UnexpectedToken(
                 front.tk.to_str(),
@@ -1244,22 +1244,24 @@ impl Parser {
         }
     }
 
-    fn parse_id_pattern(&mut self) -> Result<Pattern, ParseError> {
+    fn parse_id_pattern(&mut self) -> Result<PatternPos, ParseError> {
         let qn = self.parse_qualified_name()?;
 
         let next = self.peek_front_strict(true)?;
 
         // Something => ...
-        if qn.members.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
-            return Ok(IdOrAdtPattern(qn.name));
+        if qn.members.is_empty() && qn.members.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
+            return Ok(PatternPos { pat: IdOrAdtPattern(qn.name), pos: qn.name_pos } );
         }
 
         let params = self.parse_patterns()?;
 
-        Ok(AdtPattern(qn, params))
+        let pos = qn.get_pos();
+
+        Ok(PatternPos { pat: AdtPattern(qn, params), pos } )
     }
 
-    fn parse_patterns(&mut self) -> Result<Vec<Pattern>, ParseError> {
+    fn parse_patterns(&mut self) -> Result<Vec<PatternPos>, ParseError> {
         let front = self.peek_front(true);
 
         if !matches!(
@@ -1271,7 +1273,7 @@ impl Parser {
 
         self.skip_delimiter(vec!["("], true)?;
 
-        let mut ret: Vec<Pattern> = Vec::new();
+        let mut ret: Vec<PatternPos> = Vec::new();
         match &self.peek_front_strict(true)?.tk {
             Delimiter(d) if d == ")" => {
                 self.consume(true);
