@@ -17,7 +17,12 @@ use immutable_map::map::TreeMap;
 
 type Identifier = u64;
 type Local = (Identifier, TypeOrVar);
+type LocalFn = Identifier;
+type LocalAdt = Identifier;
+
 type LocalsMap = TreeMap<String, Local>;
+type FnMap = TreeMap<String, LocalFn>;
+type AdtMap = TreeMap<String, LocalAdt>;
 
 // for storing nominal exprs pending conversion
 enum NSExprPos {
@@ -35,10 +40,11 @@ struct TmpFunDef {
 }
 
 pub struct Analyzer {
-    // Name analysis part
+    // Name analysis part.
     fun_defs: HashMap<Identifier, TmpFunDef>,
     adt_defs: HashMap<Identifier, SAdtDef>,
-    nme_map: HashMap<String, Identifier>,
+
+    // Useful to have
     id_map: HashMap<Identifier, String>,
     id_pos_map: HashMap<Identifier, PositionRange>,
     local_id: u64,
@@ -91,7 +97,6 @@ impl Analyzer {
 
     fn fresh_id(&mut self, name: String, pos: PositionRange) -> u64 {
         self.id_map.insert(self.local_id, name.to_string());
-        self.nme_map.insert(name.to_string(), self.local_id);
         self.id_pos_map.insert(self.local_id, pos);
 
         let ret = self.local_id;
@@ -200,7 +205,7 @@ impl Analyzer {
     }
 
     // If error, just return Top
-    fn transform_type(&mut self, t: &Option<TypePos>, id_pos: PositionRange) -> TypeOrVar {
+    fn transform_type(&mut self, t: &Option<TypePos>, id_pos: PositionRange, adts: &AdtMap) -> TypeOrVar {
         match t {
             Some(ty) => match &ty.ty {
                 Type::Primitve(p) => TypeOrVar::Ty(SType::Primitve(*p)),
@@ -208,7 +213,7 @@ impl Analyzer {
                 Type::UserType(t) => {
                     // TODO: FOR NOW just use the head. But later on this needs to be changed
                     // to support importing scopes/namespaces.
-                    let id = self.nme_map.get(&t.first);
+                    let id = adts.get(&t.first);
                     
                     match id {
                         Some(id) if self.adt_defs.get(&id).is_some() => TypeOrVar::Ty(SType::UserType(*id)),
@@ -235,9 +240,10 @@ impl Analyzer {
 
     // will update the fn map
     // function will only ever be transformed once.
-    fn transform_fn(&mut self, fun_name: String, pos: PositionRange, locals: &LocalsMap) {
+    fn transform_fn(&mut self, fun_name: String, pos: PositionRange, locals: &LocalsMap,
+        fns: &FnMap, adts: &AdtMap) {
         // get id, then def
-        let fun_id = *match self.nme_map.get(&fun_name) {
+        let fun_id = *match fns.get(&fun_name) {
             Some(id) => id,
             None => {
                 self.name_errors.push(AnalysisError::FnNotFoundError(fun_name, pos));
@@ -269,7 +275,7 @@ impl Analyzer {
 
         let body_pos = body.pos;
 
-        let stripped = self.scan_defs(body);
+        let stripped = self.scan_defs(body, fns.clone(), adts.clone());
 
         // re-insert dummy definition in case of recursive calls inside the body
         let dummy_expr = SExprPos { expr: Dummy, pos: body_pos };
@@ -284,7 +290,7 @@ impl Analyzer {
         };
         self.fun_defs.insert(fun_id, dummy);
 
-        let transformed = self.convert(stripped, fun_def_owned.ty, &more_locals, &LocalsMap::new());
+        let transformed = self.convert(stripped.0, fun_def_owned.ty, &more_locals, &LocalsMap::new(), &stripped.1, &stripped.2);
 
         // If not transformed correctly, return
         if transformed.is_none() {
@@ -309,28 +315,29 @@ impl Analyzer {
         self.fun_defs.insert(fun_id, new);
     }
 
-    fn scan_defs(&mut self, e: ExprPos) -> ExprPos {
+    // Adds extra functions and adts to the map in the current scope
+    fn scan_defs(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap) -> (ExprPos, FnMap, AdtMap) {
         // TODO: scan names
-        self.scan_defs_rec(e)
+        self.scan_defs_rec(e, fns, adts)
     }
 
     // strips away all adt definitions, replaces function definitions with IDs
-    fn scan_defs_rec(&mut self, e: ExprPos) -> ExprPos {
+    fn scan_defs_rec(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap) -> (ExprPos, FnMap, AdtMap) {
         match e.expr {
             Expr::AdtDefn(defn, next) => {
                 let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
                 todo!();
-                self.scan_defs_rec(*next)
+                // self.scan_defs_rec(*next)
             }
             Expr::FunDefn(defn, next) => {
                 // if name already exists, error
-                if self.nme_map.contains_key(&defn.name) {
-                    let id = self.nme_map.get(&defn.name).unwrap();
+                if fns.contains_key(&defn.name) {
+                    let id = fns.get(&defn.name).unwrap();
                     let og_pos = self.id_pos_map.get(&id).unwrap();
 
                     self.name_errors.push(AnalysisError::NameAlreadyUsedError(defn.name.to_string(), defn.name_pos, *og_pos));
 
-                    self.scan_defs_rec(*next)
+                    self.scan_defs_rec(*next, fns, adts)
                 } else {
                     let id = self.fresh_id(defn.name.to_string(), defn.name_pos);
                 
@@ -340,7 +347,7 @@ impl Analyzer {
                             SParamDef {
                                 // TODO: fix p.pos
                                 name: self.fresh_id(p.name.to_string(), p.nme_pos),
-                                ty: self.transform_type(&p.ty, p.nme_pos),
+                                ty: self.transform_type(&p.ty, p.nme_pos, &adts),
                                 pos: p.nme_pos
                             }
                         )
@@ -348,38 +355,48 @@ impl Analyzer {
 
                     let name_pos = defn.name_pos;
 
+                    let nme = defn.name.to_string();
+
                     let defn = TmpFunDef {
-                        name_str: defn.name.to_string(),
+                        name_str: nme.to_string(),
                         name: id,
                         name_pos,
-                        ty: self.transform_type(&defn.ty, name_pos),
+                        ty: self.transform_type(&defn.ty, name_pos, &adts),
                         params: new_params,
                         body: NSExprPos::N(*defn.body)
                     };
 
                     self.fun_defs.insert(id, defn);
+                    let more_fns = fns.insert(nme.to_string(), id);
 
-                    ExprPos { expr: Expr::FunDefId(id, name_pos, Box::new(self.scan_defs_rec(*next))), pos: e.pos } 
+                    let ret = self.scan_defs_rec(*next, more_fns, adts);
+
+                    (ExprPos { expr: Expr::FunDefId(id, name_pos, Box::new(ret.0)), pos: e.pos }, ret.1, ret.2)
                 }
             }
-            Expr::Sequence(e1, e2) => ExprPos {
-                expr: Expr::Sequence(e1, Box::new(self.scan_defs_rec(*e2))),
-                pos: e.pos
-            },
-            Expr::Let(pd, expr, after) => {
-                ExprPos {
-                    expr: Expr::Let(pd, expr, Box::new(self.scan_defs_rec(*after))),
+            Expr::Sequence(e1, e2) => {
+                let ret = self.scan_defs_rec(*e2, fns, adts);
+                (ExprPos {
+                    expr: Expr::Sequence(e1, Box::new(ret.0)),
                     pos: e.pos
-                }
+                }, ret.1, ret.2)
+            } 
+            Expr::Let(pd, expr, after) => {
+                let ret = self.scan_defs_rec(*after, fns, adts);
+                (ExprPos {
+                    expr: Expr::Let(pd, expr, Box::new(ret.0)),
+                    pos: e.pos
+                }, ret.1, ret.2)
             }
-            _ => e
+            _ => (e, fns, adts)
         }
     }
 
     pub fn convert_top(&mut self, e: ExprPos) -> Option<SExprPos> {
         // scan definitions
-        let stripped = self.scan_defs(e);
-        let ret = self.convert(stripped, TypeOrVar::Ty(SType::Top), &TreeMap::new(), &TreeMap::new());
+        let stripped = self.scan_defs(e, TreeMap::new(), TreeMap::new());
+        let ret = self.convert(stripped.0, TypeOrVar::Ty(SType::Top), &TreeMap::new(), &TreeMap::new(),
+            &stripped.1, &stripped.2);
         
         // Look for unbound type variables.
         let mut checked : HashSet<u64> = HashSet::new();
@@ -406,7 +423,8 @@ impl Analyzer {
         return ret;
     }
 
-    pub fn convert(&mut self, e: ExprPos, expected: TypeOrVar, prev_locals: &LocalsMap, locals: &LocalsMap) -> Option<SExprPos> {
+    fn convert(&mut self, e: ExprPos, expected: TypeOrVar, prev_locals: &LocalsMap, locals: &LocalsMap,
+        fns: &FnMap, adts: &AdtMap) -> Option<SExprPos> {
 
         pub fn get_local(name: &String, prev_locals: &LocalsMap, locals: &LocalsMap) -> Option<Local> {
             match locals.get(name) {
@@ -422,12 +440,12 @@ impl Analyzer {
 
         let s_expr: SExpr = match e.expr {
             Expr::Nested(e) => {
-                let stripped = self.scan_defs(*e);
-                self.convert(stripped, expected, prev_locals, &LocalsMap::new())?.expr // fresh locals
+                let stripped = self.scan_defs(*e, fns.clone(), adts.clone());
+                self.convert(stripped.0, expected, prev_locals, &LocalsMap::new(), &stripped.1, &stripped.2)?.expr // fresh locals
             }
             
             Expr::FunDefn(_, after) => {
-                self.convert(*after, expected, prev_locals, locals)?.expr
+                self.convert(*after, expected, prev_locals, locals, fns, adts)?.expr
             }
             Expr::Variable(nme) => {
                 // 1. Check if in locals map
@@ -490,7 +508,7 @@ impl Analyzer {
             }
             Expr::Call(qn, args) => {
                  // get id, then def
-                let fun_id = *match self.nme_map.get(&qn.first) {
+                let fun_id = *match fns.get(&qn.first) {
                     Some(id) => id,
                     None => {
                         self.name_errors.push(AnalysisError::FnNotFoundError(qn.first, pos));
@@ -528,7 +546,7 @@ impl Analyzer {
                 for (arg, ty) in zip(args, types) {
                     // type checking occurs here
                     transformed_args.push(
-                        self.convert(arg, ty, prev_locals, locals)
+                        self.convert(arg, ty, prev_locals, locals, fns, adts)
                     );
                 }
                 
@@ -543,7 +561,7 @@ impl Analyzer {
                 self.add_constraint(expected, ret_type, pos);
 
                 // transform function
-                self.transform_fn(qn.first, pos, prev_locals);
+                self.transform_fn(qn.first, pos, prev_locals, fns, adts);
 
                 // println!("Ret type:");
                 // self.print_type(&self.resolve_type(ret_type));
@@ -556,8 +574,8 @@ impl Analyzer {
             },
             Expr::Ctor(_, _) => todo!(),
             Expr::Sequence(e1, e2) => {
-                let e1 = self.convert(*e1, TypeOrVar::Ty(SType::Top), prev_locals, locals);
-                let e2 = self.convert(*e2, expected, prev_locals, locals)?;
+                let e1 = self.convert(*e1, TypeOrVar::Ty(SType::Top), prev_locals, locals, fns, adts);
+                let e2 = self.convert(*e2, expected, prev_locals, locals, fns, adts)?;
 
                 match e1 {
                     Some(e) => SExpr::Sequence(Box::new(e), Box::new(e2)),
@@ -603,10 +621,10 @@ impl Analyzer {
                 }
 
                 // get type ID
-                let ty = self.transform_type(&pd.ty, pd.nme_pos);
+                let ty = self.transform_type(&pd.ty, pd.nme_pos, &adts);
 
                 // eval body
-                let body = self.convert(*expr, ty, prev_locals, locals);
+                let body = self.convert(*expr, ty, prev_locals, locals, fns, adts);
                 
                 // get fresh local
                 let new_local = self.fresh_id(pd.name.to_string(), pd.nme_pos);
@@ -615,7 +633,7 @@ impl Analyzer {
                 let more_prev_locals = prev_locals.insert(pd.name.to_string(), (new_local, ty));
                 let more_locals = locals.insert(pd.name, (new_local, ty));
 
-                let after = self.convert(*after, expected, &more_prev_locals, &more_locals)?;
+                let after = self.convert(*after, expected, &more_prev_locals, &more_locals, fns, adts)?;
                 
                 SExpr::Let(
                     SParamDef {
@@ -630,8 +648,8 @@ impl Analyzer {
             Expr::AssignmentOp(_, _, _, _) => todo!(),
             Expr::AdtDefn(_, _) => todo!(),
             Expr::FunDefId(id, pos, after) => {
-                self.transform_fn(self.id_map.get(&id).unwrap().to_string(), pos, prev_locals);
-                self.convert(*after, expected, prev_locals, locals)?.expr
+                self.transform_fn(self.id_map.get(&id).unwrap().to_string(), pos, prev_locals, fns, adts);
+                self.convert(*after, expected, prev_locals, locals, fns, adts)?.expr
             },
         };
 
@@ -646,7 +664,6 @@ pub fn init_analyzer() -> Analyzer {
     Analyzer {
         fun_defs: HashMap::new(),
         adt_defs: HashMap::new(),
-        nme_map: HashMap::new(),
         id_map: HashMap::new(),
         id_pos_map: HashMap::new(),
         local_id: 0,
