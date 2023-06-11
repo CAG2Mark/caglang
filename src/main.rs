@@ -279,7 +279,7 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
 fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeError) {
     match error {
         analyzer::TypeError::TypeNeededError(pos) => {
-            let msg = format!("type annotation needed for this variable");
+            let msg = format!("type annotation needed");
             print_error_at(file_name, input, "error", &pos, &msg, 31)
         }
         analyzer::TypeError::TypeMismatch(t1, t2, pos) => {
