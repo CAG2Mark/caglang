@@ -1,3 +1,5 @@
+use std::ops::Sub;
+
 use regex::Regex;
 use Vec;
 
@@ -177,6 +179,27 @@ pub fn handle_reserved(cand: &str) -> Token {
     }
 }
 
+fn op_convert(cand: &str) -> Op {
+    use crate::tokens::Op::*;
+    match cand {
+        "+" => Add,
+        "-" => Minus,
+        "*" => Times,
+        "/" => Divide,
+        "%" => Mod,
+        "!" => Not,
+        "!=" => Neq,
+        "||" => Or,
+        "&&" => And,
+        "==" => Eq,
+        "<" => Lt,
+        "<=" => Lte,
+        ">" => Gt,
+        ">=" => Gte,
+        _ => unreachable!()
+    }
+}
+
 pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let mut ret: Vec<TokenPos> = Vec::new();
 
@@ -302,7 +325,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 let p2 = string_index_to_pos(&spl, pos - 1);
 
                 let tk = if OPERATORS.contains(&val.as_str()) {
-                    Token::Operator(val)
+                    Token::Operator(op_convert(&val))
                 } else {
                     Token::AssignmentOperator(val)
                 };

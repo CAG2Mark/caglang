@@ -8,6 +8,7 @@ use crate::parsing::position::*;
 use crate::analysis::symbolic_ast::SExpr::*;
 use crate::analysis::symbolic_ast::*;
 
+use crate::parsing::tokens::Op;
 use crate::parsing::tokens::Prim;
 use crate::util::union_find_int;
 use crate::util::union_find_int::UnionFindInt;
@@ -27,6 +28,12 @@ type AdtMap = TreeMap<String, LocalAdt>;
 enum NSExprPos {
     N(ExprPos),
     S(SExprPos),
+}
+
+enum TyConstraintRes {
+    Ok,
+    ImplicitConv, // implicit conversion from actual to expected
+    Failure,
 }
 
 struct TmpFunDef {
@@ -61,6 +68,7 @@ pub struct Analyzer {
 
 pub enum TypeError {
     TypeNeededError(PositionRange),
+    InvalidOperandError(PositionRange),
     TypeMismatch(String, String, PositionRange), // expected, actual, location
 }
 pub enum AnalysisError {
@@ -78,6 +86,16 @@ pub enum AnalysisError {
     AdtNotFoundError(String, PositionRange),
     AdtVariantNotFoundError(String, String, PositionRange), // adt name, adt variant name, position
     AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
+}
+
+fn matches_float(ty: TypeOrVar) -> bool {
+    matches!(ty, TypeOrVar::Ty(SType::Primitve(Prim::Float)))
+}
+fn matches_int(ty: TypeOrVar) -> bool {
+    matches!(ty, TypeOrVar::Ty(SType::Primitve(Prim::Int)))
+}
+fn matches_bool(ty: TypeOrVar) -> bool {
+    matches!(ty, TypeOrVar::Ty(SType::Primitve(Prim::Bool)))
 }
 
 impl Analyzer {
@@ -117,13 +135,48 @@ impl Analyzer {
         ret
     }
 
-    fn types_ok(&self, expected: SType, actual: SType) -> bool {
+    fn need_implicit_conv(&self, from: SType, to: SType) -> bool {
+        use crate::analysis::symbolic_ast::SType::*;
+        use crate::tokens::Prim::*;
+
+        match (from, to) {
+            (_, Top) | (Top, _) => true,
+            (Primitve(p1), Primitve(p2)) => match (p1, p2) {
+                (Bool, Float) | (Int, Float) => true,
+                (Int, Bool) | (Float, Bool) => true,
+                (Bool, Int) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    fn types_ok(&self, expected: SType, actual: SType) -> TyConstraintRes {
+        use TyConstraintRes::*;
+
+        // implicit conv
+        if self.need_implicit_conv(actual, expected) {
+            return ImplicitConv;
+        }
+
         match (expected, actual) {
-            (SType::Primitve(p), SType::Primitve(q)) => p == q,
-            (SType::Primitve(_), SType::UserType(_)) => false,
-            (SType::UserType(_), SType::Primitve(_)) => false,
-            (SType::UserType(p), SType::UserType(q)) => p == q,
-            (SType::Top, _) | (_, SType::Top) => true,
+            (SType::Primitve(p), SType::Primitve(q)) => {
+                if p == q {
+                    Ok
+                } else {
+                    Failure
+                }
+            }
+            (SType::Primitve(_), SType::UserType(_)) => Failure,
+            (SType::UserType(_), SType::Primitve(_)) => Failure,
+            (SType::UserType(p), SType::UserType(q)) => {
+                if p == q {
+                    Ok
+                } else {
+                    Failure
+                }
+            }
+            (SType::Top, _) | (_, SType::Top) => Ok,
         }
     }
 
@@ -148,7 +201,13 @@ impl Analyzer {
         }
     }
 
-    fn add_constraint(&mut self, expected: TypeOrVar, actual: TypeOrVar, pos: PositionRange) {
+    fn add_constraint(
+        &mut self,
+        expected: TypeOrVar,
+        actual: TypeOrVar,
+        pos: PositionRange,
+    ) -> TyConstraintRes {
+        use TyConstraintRes::*;
         // println!("Constraints added:");
         // self.print_type(&expected);
         // self.print_type(&actual);
@@ -161,22 +220,26 @@ impl Analyzer {
         // println!("");
 
         match (r_expected, r_actual) {
-            (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => {
-                if !self.types_ok(p, q) {
+            (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => match self.types_ok(p, q) {
+                Failure => {
                     self.type_errors.push(TypeError::TypeMismatch(
                         self.stype_str(&p),
                         self.stype_str(&q),
                         pos,
-                    ))
+                    ));
+                    Failure
                 }
-            }
+                _ => Ok,
+            },
             (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
                 // set root id in map to type
                 self.type_map.insert(r, t);
+                Ok
             }
             (TypeOrVar::Var(r1, _), TypeOrVar::Var(r2, _)) => {
                 // union using data structure
                 self.unions.union(r1, r2);
+                Ok
 
                 // no need to resolve again and check type, already done earlier
 
@@ -705,6 +768,129 @@ impl Analyzer {
         return ret;
     }
 
+    // Converts everything to a float implicitly if at least one expression is a float.
+    // Otherwise, conerts them to an integer.
+    // If err, return the converted expressoins and their types.
+
+    // Return spec:
+    // OK: bool true -> float, bool false -> int
+    // ERR: e1, e2, t1, t2.
+    fn convert_maybe_float(
+        &mut self,
+        e1: ExprPos,
+        e2: ExprPos,
+        prev_locals: &LocalsMap,
+        locals: &LocalsMap,
+        fns: &FnMap,
+        adts: &AdtMap,
+        error_on_neq: bool,
+    ) -> Result<(SExprPos, SExprPos, bool), Option<(SExprPos, SExprPos, TypeOrVar, TypeOrVar)>>
+    {
+        let left_t = self.fresh_type_var(e1.pos);
+        let right_t = self.fresh_type_var(e2.pos);
+
+        let e1_p = e1.pos;
+        let e2_p = e2.pos;
+
+        let s_e1_ = self.convert(e1, left_t, prev_locals, locals, fns, adts);
+        let s_e2_ = self.convert(e2, right_t, prev_locals, locals, fns, adts);
+
+        if s_e1_.is_none() || s_e2_.is_none() {
+            return Err(None);
+        }
+
+        let s_e1 = s_e1_.unwrap();
+        let s_e2 = s_e2_.unwrap();
+
+        let left_r = self.resolve_type(left_t);
+        let right_r = self.resolve_type(right_t);
+
+        let mut fail = false;
+
+        // types must be known
+        if matches!(left_r, TypeOrVar::Var(_, _)) {
+            self.type_errors.push(TypeError::TypeNeededError(e1_p));
+            fail = true;
+        } else if !matches_float(left_r) && !matches_int(left_r) && !matches_bool(left_r) {
+            // both must be ints, floats or bools
+            if error_on_neq {
+                self.type_errors.push(TypeError::InvalidOperandError(e1_p));
+            }
+
+            fail = true;
+        }
+
+        if matches!(right_r, TypeOrVar::Var(_, _)) {
+            self.type_errors.push(TypeError::TypeNeededError(e2_p));
+            fail = true;
+        } else if !matches_float(right_r) && !matches_int(right_r) && !matches_bool(right_r) {
+            if error_on_neq {
+                self.type_errors.push(TypeError::InvalidOperandError(e2_p));
+            }
+            fail = true;
+        }
+
+        if fail {
+            return Err(Some((s_e1, s_e2, left_r, right_r)));
+        }
+
+        if matches_float(left_r) || matches_float(right_r) {
+            let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
+            let r1 = self.add_constraint(float_prim, left_r, e1_p);
+            let r2 = self.add_constraint(float_prim, right_r, e2_p);
+
+            fn implicit_float(s_e: SExprPos, ty: TypeOrVar, r: TyConstraintRes) -> SExprPos {
+                let pos = s_e.pos;
+
+                // implicit conversions
+                if matches!(r, TyConstraintRes::ImplicitConv) {
+                    if matches_int(ty) {
+                        SExprPos {
+                            expr: IntToFloat(Box::new(s_e)),
+                            pos,
+                        }
+                    } else {
+                        SExprPos {
+                            expr: BoolToFloat(Box::new(s_e)),
+                            pos,
+                        }
+                    }
+                } else {
+                    //
+                    s_e
+                }
+            }
+
+            Ok((
+                implicit_float(s_e1, left_r, r1),
+                implicit_float(s_e2, right_r, r2),
+                true,
+            ))
+        } else {
+            // both are integers
+            let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
+            let r1 = self.add_constraint(int_prim, left_r, e1_p);
+            let r2 = self.add_constraint(int_prim, right_r, e2_p);
+
+            fn implicit_int(s_e: SExprPos, r: TyConstraintRes) -> SExprPos {
+                let pos = s_e.pos;
+
+                // implicit conversions
+                if matches!(r, TyConstraintRes::ImplicitConv) {
+                    SExprPos {
+                        expr: BoolToInt(Box::new(s_e)),
+                        pos,
+                    }
+                } else {
+                    //
+                    s_e
+                }
+            }
+
+            Ok((implicit_int(s_e1, r1), implicit_int(s_e2, r2), false))
+        }
+    }
+
     fn convert(
         &mut self,
         e: ExprPos,
@@ -906,12 +1092,11 @@ impl Analyzer {
                         // error
 
                         if qn.scopes.len() == 0 {
-                            self.name_errors
-                                .push(AnalysisError::AdtNoBaseError(
-                                    adt_name.0,
-                                    adt_name.1,
-                                    adt_def.name_pos
-                                ));
+                            self.name_errors.push(AnalysisError::AdtNoBaseError(
+                                adt_name.0,
+                                adt_name.1,
+                                adt_def.name_pos,
+                            ));
                         } else {
                             self.name_errors
                                 .push(AnalysisError::AdtVariantNotFoundError(
@@ -1048,7 +1233,73 @@ impl Analyzer {
                 self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Unit)), pos);
                 SExpr::UnitLit
             }
-            Expr::Infix(_, _, _) => todo!(),
+            Expr::Infix(op, e1, e2) => match op {
+                Op::Add | Op::Minus | Op::Times | Op::Divide | Op::Mod => {
+                    let converted =
+                        self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, true);
+
+                    let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
+                    let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
+
+                    match converted {
+                        Ok(e) => {
+                            // is float
+                            if e.2 {
+                                self.add_constraint(expected, float_prim, pos);
+                            } else {
+                                self.add_constraint(expected, int_prim, pos);
+                            }
+                            Infix(op, Box::new(e.0), Box::new(e.1))
+                        }
+                        Err(_) => {
+                            self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
+                            return None;
+                        }
+                    }
+                }
+                Op::Not => todo!(),
+                Op::Or | Op::And | Op::Lt | Op::Lte | Op::Gt | Op::Gte => {
+                    let converted =
+                        self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, true);
+
+                    let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
+
+                    match converted {
+                        Ok(e) => {
+                            self.add_constraint(expected, bool_prim, pos);
+                            Infix(op, Box::new(e.0), Box::new(e.1))
+                        }
+                        Err(_) => {
+                            self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
+                            return None;
+                        }
+                    }
+                }
+                Op::Eq | Op::Neq => {
+                    let e2_p = e2.pos;
+
+                    let converted =
+                        self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, false);
+
+                    let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
+
+                    match converted {
+                        Ok(e) => {
+                            self.add_constraint(expected, bool_prim, pos);
+                            Infix(op, Box::new(e.0), Box::new(e.1))
+                        }
+                        Err(Some(e)) => {
+                            // both sides must have same type
+                            self.add_constraint(e.2, e.3, e2_p);
+                            Infix(op, Box::new(e.0), Box::new(e.1))
+                        }
+                        Err(None) => {
+                            self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
+                            return None;
+                        }
+                    }
+                }
+            },
             Expr::Prefix(_, _) => todo!(),
             Expr::Let(pd, expr, after) => {
                 // Check for name conflicts. Allow variable shadowing

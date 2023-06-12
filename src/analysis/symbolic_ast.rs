@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::parsing::position::*;
-use crate::parsing::tokens::Prim;
+use crate::parsing::tokens::{Prim, Op};
 
 type Identifier = u64;
 
@@ -87,10 +87,17 @@ pub enum SExpr {
     StringLit(String),
     BoolLit(bool),
     UnitLit,
-    Infix(String, Box<SExprPos>, Box<SExprPos>), // Op, left, right
-    Prefix(String, Box<SExprPos>),               // Op, expr
+    Infix(Op, Box<SExprPos>, Box<SExprPos>), // Op, left, right
+    Prefix(Op, Box<SExprPos>),               // Op, expr
     Let(SParamDef, Box<SExprPos>, Box<SExprPos>), // let x (: Type)? = first <ExprSep> second
-    AssignmentOp(String, Box<SExprPos>, Box<SExprPos>, Box<SExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
+    AssignmentOp(String, Box<SExprPos>, Box<SExprPos>, Box<SExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second,
+
+    // built in conversions
+    BoolToFloat(Box<SExprPos>),
+    IntToFloat(Box<SExprPos>),
+    BoolToInt(Box<SExprPos>),
+    FloatToBool(Box<SExprPos>),
+    IntToBool(Box<SExprPos>)
 }
 
 pub struct SExprPos {

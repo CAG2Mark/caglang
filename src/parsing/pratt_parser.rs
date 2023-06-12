@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
+use std::ops::Div;
 
 use crate::parsing::ast::*;
+
+use crate::parsing::tokens::Op;
 
 use crate::parsing::ast::ExprPos;
 
@@ -16,22 +19,21 @@ Prec:
 +, -
 *, /, %
  */
-fn get_prec(op: &String) -> (u32, u32) {
-    let op_ = op.as_str();
-
-    match op_ {
-        "||" => (1, 2),
-        "&&" => (3, 4),
-        "==" => (5, 6),
-        "<" | ">" => (7, 8),
-        "<=" | ">=" => (9, 10),
-        "+" | "-" => (11, 12),
-        "*" | "/" | "%" => (13, 14),
+fn get_prec(op: &Op) -> (u32, u32) {
+    use crate::parsing::tokens::Op::*;
+    match op {
+        Or => (1, 2),
+        And => (3, 4),
+        Eq => (5, 6),
+        Lt | Gt => (7, 8),
+        Lte | Gte => (9, 10),
+        Add | Minus => (11, 12),
+        Times | Divide | Mod  => (13, 14),
         _ => unreachable!(),
     }
 }
 
-pub fn pratt_parse(acc: ExprPos, prec: u32, rest: &mut VecDeque<(String, ExprPos)>) -> ExprPos {
+pub fn pratt_parse(acc: ExprPos, prec: u32, rest: &mut VecDeque<(Op, ExprPos)>) -> ExprPos {
     match rest.front() {
         Some((op, _)) if get_prec(op).0 > prec => {
             let front = rest.pop_front().unwrap();

@@ -196,9 +196,9 @@ impl Parser {
 
     fn skip_operator(
         &mut self,
-        expected: &str,
+        expected: Op,
         skip_exprsep: bool,
-    ) -> Result<(String, PositionRange), ParseError> {
+    ) -> Result<(Op, PositionRange), ParseError> {
         let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
@@ -207,7 +207,7 @@ impl Parser {
                         Ok((got, tk.pos))
                     } else {
                         Err(ParseError::UnexpectedToken(
-                            got,
+                            got.to_string(),
                             vec![expected.to_string()],
                             tk.pos,
                         ))
@@ -828,8 +828,8 @@ impl Parser {
         Ok(pratt_parse(first, 0, &mut VecDeque::from(rest)))
     }
 
-    fn parse_more_ops(&mut self, skip_exprsep: bool) -> Result<Vec<(String, ExprPos)>, ParseError> {
-        let mut ret: Vec<(String, ExprPos)> = Vec::new();
+    fn parse_more_ops(&mut self, skip_exprsep: bool) -> Result<Vec<(Op, ExprPos)>, ParseError> {
+        let mut ret: Vec<(Op, ExprPos)> = Vec::new();
 
         let mut front = self.peek_front(skip_exprsep);
 
@@ -841,7 +841,7 @@ impl Parser {
                         let op_ = op.to_owned();
                         self.consume(true);
                         let next = self.parse_simple_expr(skip_exprsep)?;
-                        ret.push((op_.to_string(), next));
+                        ret.push((op_, next));
                         front = self.peek_front(skip_exprsep);
                     }
                     _ => cond = false,
@@ -863,7 +863,7 @@ impl Parser {
             Keyword(kw) if kw == "if" => self.parse_ite_expr(),
             Keyword(kw) if kw == "while" => self.parse_while_expr(),
             Keyword(kw) if kw == "match" => self.parse_match_expr(),
-            Operator(op) if op == "!" || op == "-" => {
+            Operator(op) if *op == Op::Minus || *op == Op::Not => {
                 let op_ = op.to_owned();
                 self.consume(true);
                 let operand = self.parse_atomic_exp(skip_exprsep)?;

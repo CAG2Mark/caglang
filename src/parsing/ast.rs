@@ -1,4 +1,5 @@
 use crate::parsing::position::*;
+use crate::parsing::tokens::Op;
 use crate::parsing::tokens::Prim;
 use std::fmt;
 
@@ -26,7 +27,7 @@ impl QualifiedName {
 
         let last = match self.members.last() {
             Some(last) => last.1,
-            none => self.name_pos,
+            None => self.name_pos,
         };
 
         union_posr(first, last)
@@ -129,8 +130,8 @@ pub enum Expr {
     StringLit(String),
     BoolLit(bool),
     UnitLit,
-    Infix(String, Box<ExprPos>, Box<ExprPos>), // Op, left, right
-    Prefix(String, Box<ExprPos>),              // Op, expr
+    Infix(Op, Box<ExprPos>, Box<ExprPos>), // Op, left, right
+    Prefix(Op, Box<ExprPos>),              // Op, expr
     Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
     AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
     AdtDefn(AdtDef, Box<ExprPos>),                                  // // adtdef, after

@@ -321,6 +321,10 @@ fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeErr
                 t1, t2
             );
             print_error_at(file_name, input, "error", &pos, &msg, 31)
+        },
+        analyzer::TypeError::InvalidOperandError(pos) => {
+            let msg = format!("invalid operand");
+            print_error_at(file_name, input, "error", &pos, &msg, 31)
         }
     }
 }

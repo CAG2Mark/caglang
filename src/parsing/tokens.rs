@@ -1,6 +1,45 @@
 use crate::parsing::position::*;
 use std::fmt;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Op {
+    Add,
+    Minus,
+    Times,
+    Divide,
+    Mod,
+    Not,
+    Neq,
+    Or,
+    And,
+    Eq,
+    Lt,
+    Lte,
+    Gt,
+    Gte
+}
+
+impl fmt::Display for Op {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Op::Add => write!(f, "+"),
+            Op::Minus => write!(f, "-"),
+            Op::Times => write!(f, "*"),
+            Op::Divide => write!(f, "/"),
+            Op::Mod => write!(f, "%"),
+            Op::Not => write!(f, "!"),
+            Op::Neq => write!(f, "!="),
+            Op::Or => write!(f, "||"),
+            Op::And => write!(f, "&&"),
+            Op::Eq => write!(f, "=="),
+            Op::Lt => write!(f, "<"),
+            Op::Lte => write!(f, "<="),
+            Op::Gt => write!(f, ">"),
+            Op::Gte => write!(f, ">="),
+        }
+    }
+}
+
 /*
 pub enum DelimiterType {
     CurlyOpen,
@@ -59,7 +98,7 @@ pub enum Token {
     StringLiteral(String),
     BoolLiteral(bool),
     AssignmentOperator(String),
-    Operator(String),
+    Operator(Op),
     PrimType(Prim),
     Whitespace,
     Comment,
@@ -92,7 +131,8 @@ impl Token {
             Token::IntLiteral(_) => INT_LIT_STR.to_string(),
             Token::FloatLiteral(_) => FLOAT_LIT_STR.to_string(),
             Token::StringLiteral(_) => STRING_LIT_STR.to_string(),
-            Token::Operator(op) | Token::AssignmentOperator(op) => op.to_string(),
+            Token::Operator(op) => op.to_string(),
+            Token::AssignmentOperator(op) => op.to_string(),
             Token::PrimType(_) => PRIM_STR.to_string(),
             Token::BoolLiteral(_) => BOOL_LIT_STR.to_string(),
             Token::Whitespace => WHITESPACE_STR.to_string(),
