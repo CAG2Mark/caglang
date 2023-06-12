@@ -5,7 +5,7 @@ Very unfinished. Currently, the parser is nearly done and I am working on the an
 
 # Summary
 - The language will be **expression-oriented**. That is, all statements explicitly evaluate to a value, even if it is a "void"-like value, which in this case is the Unit Literal.
-- The language will be brace and semicolon optional, with the one exception being the `match` statement.
+- The language will be fully semicolon optional, and partially brace optional. Braces will be needed if you wish to chain expressions together or use the `match` statement.
 - Indents are ignored.
 - There will be type inference.
 - There will be a single ADT declaration for declaring both product and sum types. Product types are like structs, while sum types are like enums in Rust. There is no distinction between product and sum types, and one can also create combined sum and product types.
