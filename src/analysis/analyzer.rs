@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::zip;
 
+use crate::analysis::symbolic_ast;
 use crate::parsing::ast::*;
 use crate::parsing::position::*;
 
@@ -42,6 +43,7 @@ struct TmpFunDef {
     name_pos: PositionRange,
     ty: TypeOrVar,
     params: Vec<(String, SParamDef)>,
+    captured_locals: Option<LocalsMap>,
     body: NSExprPos,
 }
 
@@ -208,6 +210,7 @@ impl Analyzer {
         pos: PositionRange,
     ) -> TyConstraintRes {
         use TyConstraintRes::*;
+        use crate::analysis::symbolic_ast::SType::*;
         // println!("Constraints added:");
         // self.print_type(&expected);
         // self.print_type(&actual);
@@ -233,6 +236,10 @@ impl Analyzer {
             },
             (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
                 // set root id in map to type
+                if matches!(t, Top) {
+                    return Ok
+                }
+
                 self.type_map.insert(r, t);
                 Ok
             }
@@ -321,18 +328,18 @@ impl Analyzer {
     // function will only ever be transformed once.
     fn transform_fn(
         &mut self,
-        fun_name: String,
-        pos: PositionRange,
-        locals: &LocalsMap,
-        fns: &FnMap,
-        adts: &AdtMap,
+        fun_name: &String, // name
+        pos: PositionRange, // where the function was found
+        locals: &LocalsMap, // locals
+        fns: &FnMap, // fns
+        adts: &AdtMap, // adts
     ) {
         // get id, then def
-        let fun_id = *match fns.get(&fun_name) {
+        let fun_id = *match fns.get(fun_name) {
             Some(id) => id,
             None => {
                 self.name_errors
-                    .push(AnalysisError::FnNotFoundError(fun_name, pos));
+                    .push(AnalysisError::FnNotFoundError(fun_name.clone(), pos));
                 return;
             }
         };
@@ -341,7 +348,7 @@ impl Analyzer {
             Some(f) => f,
             None => {
                 self.name_errors
-                    .push(AnalysisError::FnNotFoundError(fun_name, pos));
+                    .push(AnalysisError::FnNotFoundError(fun_name.clone(), pos));
                 return;
             }
         };
@@ -358,11 +365,16 @@ impl Analyzer {
             NSExprPos::S(_) => unreachable!(),
         };
 
-        let more_locals = self.add_fn_locals(&fun_def_owned.params, locals);
+        let locals_ = match fun_def_owned.captured_locals {
+            Some(l) => l,
+            None => locals.clone(),
+        };
+
+        let more_locals = self.add_fn_locals(&fun_def_owned.params, &locals_);
 
         let body_pos = body.pos;
 
-        let stripped = self.scan_defs(body, fns.clone(), adts.clone());
+        // let stripped = self.scan_defs(body, fns.clone(), adts.clone());
 
         // re-insert dummy definition in case of recursive calls inside the body
         let dummy_expr = SExprPos {
@@ -375,18 +387,19 @@ impl Analyzer {
             name: fun_def_owned.name,
             name_pos: fun_def_owned.name_pos,
             ty: fun_def_owned.ty,
+            captured_locals: Some(locals_),
             params: fun_def_owned.params,
             body: NSExprPos::S(dummy_expr),
         };
         self.fun_defs.insert(fun_id, dummy);
 
         let transformed = self.convert(
-            stripped.0,
+            body,
             fun_def_owned.ty,
             &more_locals,
             &LocalsMap::new(),
-            &stripped.1,
-            &stripped.2,
+            &fns,
+            &adts,
         );
 
         // If not transformed correctly, return
@@ -406,6 +419,7 @@ impl Analyzer {
             name_pos: retrieved.name_pos,
             ty: retrieved.ty,
             params: retrieved.params,
+            captured_locals: retrieved.captured_locals,
             body: NSExprPos::S(transformed_),
         };
 
@@ -657,6 +671,7 @@ impl Analyzer {
                         name_pos,
                         ty: self.transform_type(&defn.ty, name_pos, &adts),
                         params: new_params,
+                        captured_locals: None,
                         body: NSExprPos::N(*defn.body),
                     };
 
@@ -734,6 +749,7 @@ impl Analyzer {
     pub fn convert_top(&mut self, e: ExprPos) -> Option<SExprPos> {
         // scan definitions
         let stripped = self.scan_defs(e, TreeMap::new(), TreeMap::new());
+        let pos = stripped.0.pos;
         let ret = self.convert(
             stripped.0,
             TypeOrVar::Ty(SType::Top),
@@ -742,6 +758,11 @@ impl Analyzer {
             &stripped.1,
             &stripped.2,
         );
+
+        // transform any remaining functions not yet transformed
+        for fn_id in stripped.1.into_iter() {
+            self.transform_fn(fn_id.0, pos, &LocalsMap::new(), &stripped.1, &stripped.2)
+        }
 
         // Look for unbound type variables.
         let mut checked: HashSet<u64> = HashSet::new();
@@ -773,7 +794,7 @@ impl Analyzer {
     // If err, return the converted expressoins and their types.
 
     // Return spec:
-    // OK: bool true -> float, bool false -> int
+    // OK: (e1, e2, is_float, is_top)
     // ERR: e1, e2, t1, t2.
     fn convert_maybe_float(
         &mut self,
@@ -784,7 +805,7 @@ impl Analyzer {
         fns: &FnMap,
         adts: &AdtMap,
         error_on_neq: bool,
-    ) -> Result<(SExprPos, SExprPos, bool), Option<(SExprPos, SExprPos, TypeOrVar, TypeOrVar)>>
+    ) -> Result<(SExprPos, SExprPos, bool, bool), Option<(SExprPos, SExprPos, TypeOrVar, TypeOrVar)>>
     {
         let left_t = self.fresh_type_var(e1.pos);
         let right_t = self.fresh_type_var(e2.pos);
@@ -804,6 +825,11 @@ impl Analyzer {
 
         let left_r = self.resolve_type(left_t);
         let right_r = self.resolve_type(right_t);
+
+        // if either are top
+        if matches!(left_r, TypeOrVar::Ty(SType::Top)) || matches!(right_r, TypeOrVar::Ty(SType::Top)) {
+            return Ok((s_e1, s_e2, false, true));
+        }
 
         let mut fail = false;
 
@@ -865,6 +891,7 @@ impl Analyzer {
                 implicit_float(s_e1, left_r, r1),
                 implicit_float(s_e2, right_r, r2),
                 true,
+                false
             ))
         } else {
             // both are integers
@@ -887,7 +914,7 @@ impl Analyzer {
                 }
             }
 
-            Ok((implicit_int(s_e1, r1), implicit_int(s_e2, r2), false))
+            Ok((implicit_int(s_e1, r1), implicit_int(s_e2, r2), false, false))
         }
     }
 
@@ -1028,13 +1055,17 @@ impl Analyzer {
                     }
                 };
 
-                let ret_type = fun_def.ty;
+                // self.print_type(&self.resolve_type(ret_type));
 
                 let mut types: Vec<TypeOrVar> = vec![];
 
                 for p in &fun_def.params {
                     types.push(p.1.ty);
                 }
+
+                let ty_ = fun_def.ty.clone();
+                let ret_type = self.resolve_type(ty_);
+                // self.print_type(&ret_type);
 
                 let transformed_args =
                     self.convert_args(args, &types, &qn, e.pos, prev_locals, locals, fns, adts);
@@ -1043,7 +1074,7 @@ impl Analyzer {
                 self.add_constraint(expected, ret_type, pos);
 
                 // transform function
-                self.transform_fn(qn.name, pos, prev_locals, fns, adts);
+                self.transform_fn(&qn.name, pos, prev_locals, fns, adts);
 
                 // println!("Ret type:");
                 // self.print_type(&self.resolve_type(ret_type));
@@ -1240,19 +1271,22 @@ impl Analyzer {
 
                     let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
                     let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
+                    let top = TypeOrVar::Ty(SType::Top);
 
                     match converted {
                         Ok(e) => {
                             // is float
                             if e.2 {
                                 self.add_constraint(expected, float_prim, pos);
+                            } else if e.3 {
+                                self.add_constraint(expected, top, pos);
                             } else {
                                 self.add_constraint(expected, int_prim, pos);
                             }
                             Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(_) => {
-                            self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
+                            // self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
                             return None;
                         }
                     }
@@ -1266,11 +1300,17 @@ impl Analyzer {
 
                     match converted {
                         Ok(e) => {
-                            self.add_constraint(expected, bool_prim, pos);
+                            let top = TypeOrVar::Ty(SType::Top);
+                            if e.3 {
+                                self.add_constraint(expected, top, pos);
+                            } else {
+                                self.add_constraint(expected, bool_prim, pos);
+                            }
+                            
                             Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(_) => {
-                            self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
+                            // self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
                             return None;
                         }
                     }
@@ -1285,7 +1325,13 @@ impl Analyzer {
 
                     match converted {
                         Ok(e) => {
-                            self.add_constraint(expected, bool_prim, pos);
+                            let top = TypeOrVar::Ty(SType::Top);
+                            if e.3 {
+                                self.add_constraint(expected, top, pos);
+                            } else {
+                                self.add_constraint(expected, bool_prim, pos);
+                            }
+                            
                             Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(Some(e)) => {
@@ -1294,7 +1340,7 @@ impl Analyzer {
                             Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(None) => {
-                            self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
+                            // self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
                             return None;
                         }
                     }
@@ -1347,13 +1393,22 @@ impl Analyzer {
             Expr::AssignmentOp(_, _, _, _) => todo!(),
             Expr::AdtDefn(_, _) => unreachable!(),
             Expr::FunDefId(id, pos, after) => {
-                self.transform_fn(
-                    self.id_map.get(&id).unwrap().to_string(),
-                    pos,
-                    prev_locals,
-                    fns,
-                    adts,
-                );
+                // capture locals
+                
+                let retrieved = self.fun_defs.remove(&id).unwrap();
+
+                let new = TmpFunDef {
+                    name_str: retrieved.name_str,
+                    name: retrieved.name,
+                    name_pos: retrieved.name_pos,
+                    ty: retrieved.ty,
+                    params: retrieved.params,
+                    captured_locals: Some(locals.clone()),
+                    body: retrieved.body
+                };
+
+                self.fun_defs.insert(id, new);
+
                 self.convert(*after, expected, prev_locals, locals, fns, adts)?
                     .expr
             }

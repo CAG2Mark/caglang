@@ -216,7 +216,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let float_literal_re = Regex::new(r"\d+(?:\.\d+f?|f)").unwrap();
     let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
     let operator_re =
-        Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<|<=|>|>=|=").unwrap();
+        Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<=|<|>=|>|=").unwrap();
     // can "escape" away new lines using \
     let whitespace_re = Regex::new(r"( |\t)+|\\( |\t)*\n( |\t)*").unwrap();
     // semicolon with new lines or whitespace around it
