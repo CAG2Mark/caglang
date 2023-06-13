@@ -239,8 +239,8 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             );
             print_error_at(file_name, input, "error", &pos, &msg, 31)
         }
-        analyzer::AnalysisError::NoMemberError(name, pos) => {
-            let msg = format!("member \x1b[1m{}\x1b[0m does not exist", name);
+        analyzer::AnalysisError::NoMemberError(ty, name, pos) => {
+            let msg = format!("type \x1b[1m{}\x1b[0m has no member \x1b[1m{}\x1b[0m", ty, name);
             print_error_at(file_name, input, "error", &pos, &msg, 31)
         }
         analyzer::AnalysisError::VariableRedefError(name, offending, original) => {

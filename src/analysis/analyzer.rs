@@ -31,12 +31,6 @@ enum NSExprPos {
     S(SExprPos),
 }
 
-enum TyConstraintRes {
-    Ok,
-    ImplicitConv, // implicit conversion from actual to expected
-    Failure,
-}
-
 struct TmpFunDef {
     name_str: String,
     name: Identifier,
@@ -78,7 +72,7 @@ pub enum AnalysisError {
     FnNotFoundError(String, PositionRange),
     TooManyArgsError(String, PositionRange), // fn name, fn pos, position of excess args
     TooFewArgsError(String, PositionRange),  // fn name, fn pos, position of excess args
-    NoMemberError(String, PositionRange),
+    NoMemberError(String, String, PositionRange), // type name, member, pos
     TypeNotFound(String, PositionRange),
     NameAlreadyUsedError(String, PositionRange, PositionRange), // name, offending position, original position
     VariableRedefError(String, PositionRange, PositionRange), // name, offending position, original position
@@ -112,6 +106,17 @@ impl Analyzer {
         };
     }
 
+    fn type_to_string(&self, ty: &TypeOrVar) -> String {
+        match ty {
+            TypeOrVar::Ty(t) => match t {
+                SType::Top => "Top".to_string(),
+                SType::Primitve(p) => format!("{}", p),
+                SType::UserType(t) => format!("{}", self.id_map.get(t).unwrap()),
+            },
+            TypeOrVar::Var(v, _) => format!("TypeVar({})", v),
+        }
+    }
+
     fn get_adt_def(&self, id: &Identifier) -> Option<&SAdtDef> {
         self.adt_defs.get(id)
     }
@@ -137,48 +142,13 @@ impl Analyzer {
         ret
     }
 
-    fn need_implicit_conv(&self, from: SType, to: SType) -> bool {
-        use crate::analysis::symbolic_ast::SType::*;
-        use crate::tokens::Prim::*;
-
-        match (from, to) {
-            (_, Top) | (Top, _) => true,
-            (Primitve(p1), Primitve(p2)) => match (p1, p2) {
-                (Bool, Float) | (Int, Float) => true,
-                (Int, Bool) | (Float, Bool) => true,
-                (Bool, Int) => true,
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
-    fn types_ok(&self, expected: SType, actual: SType) -> TyConstraintRes {
-        use TyConstraintRes::*;
-
-        // implicit conv
-        if self.need_implicit_conv(actual, expected) {
-            return ImplicitConv;
-        }
-
+    fn types_ok(&self, expected: SType, actual: SType) -> bool {
         match (expected, actual) {
-            (SType::Primitve(p), SType::Primitve(q)) => {
-                if p == q {
-                    Ok
-                } else {
-                    Failure
-                }
-            }
-            (SType::Primitve(_), SType::UserType(_)) => Failure,
-            (SType::UserType(_), SType::Primitve(_)) => Failure,
-            (SType::UserType(p), SType::UserType(q)) => {
-                if p == q {
-                    Ok
-                } else {
-                    Failure
-                }
-            }
-            (SType::Top, _) | (_, SType::Top) => Ok,
+            (SType::Primitve(p), SType::Primitve(q)) => p == q,
+            (SType::Primitve(_), SType::UserType(_)) => false,
+            (SType::UserType(_), SType::Primitve(_)) => false,
+            (SType::UserType(p), SType::UserType(q)) => p == q,
+            (SType::Top, _) | (_, SType::Top) => true,
         }
     }
 
@@ -203,50 +173,85 @@ impl Analyzer {
         }
     }
 
+    fn add_constraint_pos(
+        &mut self,
+        expr: SExprPos,
+        expected: TypeOrVar,
+        actual: TypeOrVar,
+    ) -> Option<SExprPos> {
+        self.add_constraint(expr.expr, expected, actual, expr.pos)
+    }
+    
+    // returns converted expression, type of new expression
+    fn implicit_convert(&self, expr: SExprPos, expected: TypeOrVar, actual: TypeOrVar) -> (SExprPos, TypeOrVar) {
+        use crate::parsing::tokens::Prim::*;
+
+        let pos = expr.pos;
+
+        match (expected, actual) {
+            (TypeOrVar::Ty(SType::Primitve(p1)), TypeOrVar::Ty(SType::Primitve(p2))) => {
+                let new_expr = match (p1, p2) {
+                    (Float, Bool) => BoolToFloat(Box::new(expr)),
+                    (Float, Int) => IntToFloat(Box::new(expr)),
+                    (Int, Bool) => BoolToInt(Box::new(expr)),
+                    (Float, Bool) => FloatToBool(Box::new(expr)),
+                    (Int, Bool) => IntToBool(Box::new(expr)),
+                    _ => return (expr, actual)
+                };
+                (SExprPos {
+                    expr: new_expr,
+                    pos,
+                }, expected)
+            }
+            _ => (expr, actual)
+        }
+    }
+
+    // Also handles implicit conversions.
     fn add_constraint(
         &mut self,
+        expr: SExpr,
         expected: TypeOrVar,
         actual: TypeOrVar,
         pos: PositionRange,
-    ) -> TyConstraintRes {
-        use TyConstraintRes::*;
+    ) -> Option<SExprPos> {
+        // useful imports
         use crate::analysis::symbolic_ast::SType::*;
-        // println!("Constraints added:");
-        // self.print_type(&expected);
-        // self.print_type(&actual);
-        // println!("Resolved to:");
-        // find roots
+
+        // resolve types
         let r_expected = self.resolve_type(expected);
         let r_actual = self.resolve_type(actual);
-        // self.print_type(&r_expected);
-        // self.print_type(&r_actual);
-        // println!("");
 
-        match (r_expected, r_actual) {
-            (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => match self.types_ok(p, q) {
-                Failure => {
+        let res = self.implicit_convert(SExprPos { expr, pos } , r_expected, r_actual);
+
+        let expr = res.0;
+        let c_actual = res.1;
+
+        match (r_expected, c_actual) {
+            (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => {
+                if self.types_ok(p, q) {
+                    Some(expr)
+                } else {
                     self.type_errors.push(TypeError::TypeMismatch(
                         self.stype_str(&p),
                         self.stype_str(&q),
                         pos,
                     ));
-                    Failure
+                    None
                 }
-                _ => Ok,
-            },
+            }
             (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
                 // set root id in map to type
-                if matches!(t, Top) {
-                    return Ok
+                if !matches!(t, Top) {
+                    self.type_map.insert(r, t);
                 }
 
-                self.type_map.insert(r, t);
-                Ok
+                Some(expr)
             }
             (TypeOrVar::Var(r1, _), TypeOrVar::Var(r2, _)) => {
                 // union using data structure
                 self.unions.union(r1, r2);
-                Ok
+                Some(expr)
 
                 // no need to resolve again and check type, already done earlier
 
@@ -328,11 +333,11 @@ impl Analyzer {
     // function will only ever be transformed once.
     fn transform_fn(
         &mut self,
-        fun_name: &String, // name
+        fun_name: &String,  // name
         pos: PositionRange, // where the function was found
         locals: &LocalsMap, // locals
-        fns: &FnMap, // fns
-        adts: &AdtMap, // adts
+        fns: &FnMap,        // fns
+        adts: &AdtMap,      // adts
     ) {
         // get id, then def
         let fun_id = *match fns.get(fun_name) {
@@ -827,7 +832,9 @@ impl Analyzer {
         let right_r = self.resolve_type(right_t);
 
         // if either are top
-        if matches!(left_r, TypeOrVar::Ty(SType::Top)) || matches!(right_r, TypeOrVar::Ty(SType::Top)) {
+        if matches!(left_r, TypeOrVar::Ty(SType::Top))
+            || matches!(right_r, TypeOrVar::Ty(SType::Top))
+        {
             return Ok((s_e1, s_e2, false, true));
         }
 
@@ -862,9 +869,12 @@ impl Analyzer {
 
         if matches_float(left_r) || matches_float(right_r) {
             let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
-            let r1 = self.add_constraint(float_prim, left_r, e1_p);
-            let r2 = self.add_constraint(float_prim, right_r, e2_p);
+            let e1 = self.add_constraint_pos(s_e1, float_prim, left_r).unwrap();
+            let e2 = self.add_constraint_pos(s_e2, float_prim, right_r).unwrap();
 
+            Ok((e1, e2, true, false))
+
+            /*
             fn implicit_float(s_e: SExprPos, ty: TypeOrVar, r: TyConstraintRes) -> SExprPos {
                 let pos = s_e.pos;
 
@@ -886,19 +896,14 @@ impl Analyzer {
                     s_e
                 }
             }
-
-            Ok((
-                implicit_float(s_e1, left_r, r1),
-                implicit_float(s_e2, right_r, r2),
-                true,
-                false
-            ))
+            */
         } else {
             // both are integers
             let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
-            let r1 = self.add_constraint(int_prim, left_r, e1_p);
-            let r2 = self.add_constraint(int_prim, right_r, e2_p);
+            let e1 = self.add_constraint_pos(s_e1, int_prim, left_r).unwrap();
+            let e2 = self.add_constraint_pos(s_e2, int_prim, right_r).unwrap();
 
+            /*
             fn implicit_int(s_e: SExprPos, r: TyConstraintRes) -> SExprPos {
                 let pos = s_e.pos;
 
@@ -913,8 +918,9 @@ impl Analyzer {
                     s_e
                 }
             }
+            */
 
-            Ok((implicit_int(s_e1, r1), implicit_int(s_e2, r2), false, false))
+            Ok((e1, e2, false, false))
         }
     }
 
@@ -943,7 +949,7 @@ impl Analyzer {
 
         let pos = e.pos;
 
-        let s_expr: SExpr = match e.expr {
+        let s_expr: SExprPos = match e.expr {
             Expr::Nested(e) => {
                 let stripped = self.scan_defs(*e, fns.clone(), adts.clone());
                 self.convert(
@@ -953,13 +959,11 @@ impl Analyzer {
                     &LocalsMap::new(),
                     &stripped.1,
                     &stripped.2,
-                )?
-                .expr // fresh locals
+                )? // fresh locals
             }
 
             Expr::FunDefn(_, after) => {
                 self.convert(*after, expected, prev_locals, locals, fns, adts)?
-                    .expr
             }
             Expr::Variable(nme) => {
                 // not yet implemented
@@ -978,62 +982,63 @@ impl Analyzer {
                     }
                 };
 
-                // if ty is in type map, set
-                let ty = self.resolve_type(local.1);
+                // Get type
+                let mut ty = self.resolve_type(local.1);
 
-                match nme.members.first() {
-                    None => {
-                        self.add_constraint(expected, ty, pos); // we know its type, so add the constraint
-                        SExpr::Variable(local.0, Vec::new())
-                    }
-                    Some(next) =>
-                    // 3. In case it's accessing a data member, we require that its
-                    // type is already inferred.
-                    {
-                        match ty {
-                            TypeOrVar::Ty(SType::UserType(id)) => {
-                                // Get the adt def.
-                                let adt_def = self.get_adt_def(&id).unwrap();
-                                // Check if the member exists in the scope.
-                                let param_id_ = adt_def.name_map.get(&next.0);
+                let mut s_members: Vec<Identifier> = vec![];
 
-                                match param_id_ {
-                                    Some(param_id) => {
-                                        // add type constarint, return
+                // For each xk in  first.x1.x2...xn, resolve type of each xk sequentially
 
-                                        let pd = adt_def
-                                            .params
-                                            .iter()
-                                            .find(|p| p.name == *param_id)
-                                            .unwrap();
-                                        let ty_ = pd.ty;
-                                        let param_id_owned = *param_id;
-
-                                        self.add_constraint(expected, ty_, pos);
-                                        SExpr::Variable(local.0, vec![param_id_owned])
-                                    }
-                                    None => {
-                                        // error
-                                        self.name_errors.push(AnalysisError::NoMemberError(
-                                            next.0.to_string(),
-                                            pos,
-                                        ));
-                                        return None;
-                                    }
+                for (member, pos) in nme.members {
+                    match ty {
+                        TypeOrVar::Ty(SType::UserType(id)) => {
+                            // get adt type
+                            let adt_def = self.adt_defs.get(&id).unwrap();
+                            // get member id
+                            let member_id = *match adt_def.name_map.get(&member) {
+                                Some(id) => id,
+                                None => {
+                                    self.name_errors.push(AnalysisError::NoMemberError(
+                                        self.type_to_string(&ty),
+                                        member,
+                                        pos,
+                                    ));
+                                    return None;
                                 }
-                            }
-                            TypeOrVar::Ty(SType::Primitve(_)) | TypeOrVar::Ty(SType::Top) => {
-                                self.name_errors
-                                    .push(AnalysisError::NoMemberError(next.0.to_string(), pos));
-                                return None;
-                            }
-                            TypeOrVar::Var(_, pos) => {
-                                self.type_errors.push(TypeError::TypeNeededError(pos));
-                                return None;
-                            }
+                            };
+
+                            // get member defn
+                            let member_pd =
+                                adt_def.params.iter().find(|p| p.name == member_id).unwrap();
+
+                            // set type to this new member definition
+                            ty = member_pd.ty;
+
+                            // push id
+                            s_members.push(member_id);
+                        }
+                        TypeOrVar::Ty(SType::Primitve(_)) => {
+                            self.name_errors.push(AnalysisError::NoMemberError(
+                                self.type_to_string(&ty),
+                                member,
+                                pos,
+                            ));
+                            return None;
+                        }
+                        TypeOrVar::Ty(SType::Top) => {
+                            // ignore
+                            return None;
+                        }
+                        TypeOrVar::Var(_, _) => {
+                            self.type_errors.push(TypeError::TypeNeededError(pos));
+                            return None;
                         }
                     }
                 }
+
+                let e = SExpr::Variable(local.0, s_members);
+
+                self.add_constraint(e, expected, ty, pos)?
             }
             Expr::Call(qn, args) => {
                 // get id, then def
@@ -1070,8 +1075,9 @@ impl Analyzer {
                 let transformed_args =
                     self.convert_args(args, &types, &qn, e.pos, prev_locals, locals, fns, adts);
 
+                let e = SExpr::Call(fun_id, transformed_args?);
                 // add type constraint
-                self.add_constraint(expected, ret_type, pos);
+                let ret = self.add_constraint(e, expected, ret_type, pos);
 
                 // transform function
                 self.transform_fn(&qn.name, pos, prev_locals, fns, adts);
@@ -1081,7 +1087,7 @@ impl Analyzer {
                 // println!("First arg type:")
                 // self.print_type(&self.resolve_type(func.ty));
 
-                SExpr::Call(fun_id, transformed_args?)
+                ret?
             }
             Expr::Ctor(qn, args) => {
                 // NOTE: Adt() actually calls Adt::Base(). We need to handle this.
@@ -1161,9 +1167,9 @@ impl Analyzer {
                 // 3. check type
                 let ctor_type = TypeOrVar::Ty(SType::UserType(adt_id));
 
-                self.add_constraint(expected, ctor_type, e.pos);
+                let expr = SExpr::Ctor(adt_id, ctor_id, transformed_args?);
 
-                SExpr::Ctor(adt_id, ctor_id, transformed_args?)
+                self.add_constraint(expr, expected, ctor_type, e.pos)?
             }
             Expr::Sequence(e1, e2) => {
                 let e1 = self.convert(
@@ -1177,7 +1183,10 @@ impl Analyzer {
                 let e2 = self.convert(*e2, expected, prev_locals, locals, fns, adts)?;
 
                 match e1 {
-                    Some(e) => SExpr::Sequence(Box::new(e), Box::new(e2)),
+                    Some(e) => SExprPos {
+                        expr: SExpr::Sequence(Box::new(e), Box::new(e2)),
+                        pos,
+                    },
                     None => return None,
                 }
             }
@@ -1217,12 +1226,15 @@ impl Analyzer {
                     elif_e_conv.push((Box::new(e.0?), Box::new(e.1?)))
                 }
 
-                SExpr::Ite(
-                    Box::new(cond_conv?),
-                    Box::new(if_e_conv?),
-                    elif_e_conv,
-                    else_e_conv,
-                )
+                SExprPos {
+                    expr: SExpr::Ite(
+                        Box::new(cond_conv?),
+                        Box::new(if_e_conv?),
+                        elif_e_conv,
+                        else_e_conv,
+                    ),
+                    pos,
+                }
             }
             Expr::Match(_, _) => todo!(),
             Expr::While(cond, body) => {
@@ -1239,31 +1251,40 @@ impl Analyzer {
                     adts,
                 );
 
+                let e = SExpr::While(Box::new(cond_conv?), Box::new(body_conv?));
                 // while expression has type unit
-                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Bool)), pos);
-
-                SExpr::While(Box::new(cond_conv?), Box::new(body_conv?))
+                self.add_constraint(e, expected, TypeOrVar::Ty(SType::Primitve(Prim::Bool)), pos)?
             }
-            Expr::IntLit(v) => {
-                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Int)), pos);
-                SExpr::IntLit(v)
-            }
-            Expr::FloatLit(v) => {
-                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Float)), pos);
-                SExpr::FloatLit(v)
-            }
-            Expr::StringLit(v) => {
-                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::String)), pos);
-                SExpr::StringLit(v.to_string())
-            }
-            Expr::BoolLit(v) => {
-                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Bool)), pos);
-                SExpr::BoolLit(v)
-            }
-            Expr::UnitLit => {
-                self.add_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Unit)), pos);
-                SExpr::UnitLit
-            }
+            Expr::IntLit(v) => self.add_constraint(
+                SExpr::IntLit(v),
+                expected,
+                TypeOrVar::Ty(SType::Primitve(Prim::Int)),
+                pos,
+            )?,
+            Expr::FloatLit(v) => self.add_constraint(
+                SExpr::FloatLit(v),
+                expected,
+                TypeOrVar::Ty(SType::Primitve(Prim::Float)),
+                pos,
+            )?,
+            Expr::StringLit(v) => self.add_constraint(
+                SExpr::StringLit(v.to_string()),
+                expected,
+                TypeOrVar::Ty(SType::Primitve(Prim::String)),
+                pos,
+            )?,
+            Expr::BoolLit(v) => self.add_constraint(
+                SExpr::BoolLit(v),
+                expected,
+                TypeOrVar::Ty(SType::Primitve(Prim::Bool)),
+                pos,
+            )?,
+            Expr::UnitLit => self.add_constraint(
+                SExpr::UnitLit,
+                expected,
+                TypeOrVar::Ty(SType::Primitve(Prim::Unit)),
+                pos,
+            )?,
             Expr::Infix(op, e1, e2) => match op {
                 Op::Add | Op::Minus | Op::Times | Op::Divide | Op::Mod => {
                     let converted =
@@ -1275,15 +1296,15 @@ impl Analyzer {
 
                     match converted {
                         Ok(e) => {
+                            let expr = Infix(op, Box::new(e.0), Box::new(e.1));
                             // is float
                             if e.2 {
-                                self.add_constraint(expected, float_prim, pos);
+                                self.add_constraint(expr, expected, float_prim, pos)?
                             } else if e.3 {
-                                self.add_constraint(expected, top, pos);
+                                self.add_constraint(expr, expected, top, pos)?
                             } else {
-                                self.add_constraint(expected, int_prim, pos);
+                                self.add_constraint(expr, expected, int_prim, pos)?
                             }
-                            Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(_) => {
                             // self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
@@ -1301,13 +1322,12 @@ impl Analyzer {
                     match converted {
                         Ok(e) => {
                             let top = TypeOrVar::Ty(SType::Top);
+                            let expr = Infix(op, Box::new(e.0), Box::new(e.1));
                             if e.3 {
-                                self.add_constraint(expected, top, pos);
+                                self.add_constraint(expr, expected, top, pos)?
                             } else {
-                                self.add_constraint(expected, bool_prim, pos);
+                                self.add_constraint(expr, expected, bool_prim, pos)?
                             }
-                            
-                            Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(_) => {
                             // self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
@@ -1325,19 +1345,23 @@ impl Analyzer {
 
                     match converted {
                         Ok(e) => {
+                            let expr = Infix(op, Box::new(e.0), Box::new(e.1));
+
                             let top = TypeOrVar::Ty(SType::Top);
                             if e.3 {
-                                self.add_constraint(expected, top, pos);
+                                self.add_constraint(expr, expected, top, pos)?
                             } else {
-                                self.add_constraint(expected, bool_prim, pos);
+                                self.add_constraint(expr, expected, bool_prim, pos)?
                             }
-                            
-                            Infix(op, Box::new(e.0), Box::new(e.1))
                         }
                         Err(Some(e)) => {
                             // both sides must have same type
-                            self.add_constraint(e.2, e.3, e2_p);
-                            Infix(op, Box::new(e.0), Box::new(e.1))
+                            self.add_constraint(
+                                Infix(op, Box::new(e.0), Box::new(e.1)),
+                                e.2,
+                                e.3,
+                                e2_p,
+                            )?
                         }
                         Err(None) => {
                             // self.add_constraint(expected, TypeOrVar::Ty(SType::Top), pos);
@@ -1380,7 +1404,7 @@ impl Analyzer {
                 let after =
                     self.convert(*after, expected, &more_prev_locals, &more_locals, fns, adts)?;
 
-                SExpr::Let(
+                SExprPos { expr: SExpr::Let(
                     SParamDef {
                         name: new_local,
                         ty: ty,
@@ -1388,13 +1412,13 @@ impl Analyzer {
                     },
                     Box::new(body?),
                     Box::new(after),
-                )
+                ), pos }
             }
             Expr::AssignmentOp(_, _, _, _) => todo!(),
             Expr::AdtDefn(_, _) => unreachable!(),
             Expr::FunDefId(id, pos, after) => {
                 // capture locals
-                
+
                 let retrieved = self.fun_defs.remove(&id).unwrap();
 
                 let new = TmpFunDef {
@@ -1404,17 +1428,16 @@ impl Analyzer {
                     ty: retrieved.ty,
                     params: retrieved.params,
                     captured_locals: Some(locals.clone()),
-                    body: retrieved.body
+                    body: retrieved.body,
                 };
 
                 self.fun_defs.insert(id, new);
 
                 self.convert(*after, expected, prev_locals, locals, fns, adts)?
-                    .expr
             }
         };
 
-        Some(SExprPos { expr: s_expr, pos })
+        Some(s_expr)
     }
 }
 
