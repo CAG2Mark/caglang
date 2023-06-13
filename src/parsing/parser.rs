@@ -24,6 +24,13 @@ fn vec_str_to_string(v: Vec<&str>) -> Vec<String> {
     v.into_iter().map(|s| s.to_string()).collect()
 }
 
+fn is_infix_op(op: &Op) -> bool {
+    match op {
+        Op::Not => false,
+        _ => true
+    }
+}
+
 impl Parser {
     fn skip_keyword(
         &mut self,
@@ -839,6 +846,12 @@ impl Parser {
                 Some(tk) => match &tk.tk {
                     Operator(op) => {
                         let op_ = op.to_owned();
+                        
+                        if !is_infix_op(&op) {
+                            cond = false;
+                            continue;
+                        }
+
                         self.consume(true);
                         let next = self.parse_simple_expr(skip_exprsep)?;
                         ret.push((op_, next));

@@ -102,6 +102,10 @@ fn matches_number(ty: &TypeOrVar) -> bool {
     matches_float(ty) || matches_int(ty)
 }
 
+fn matches_numerical(ty: &TypeOrVar) -> bool {
+    matches_float(ty) || matches_int(ty) || matches_bool(ty)
+}
+
 impl Analyzer {
     fn print_type(&self, ty: &TypeOrVar) {
         match ty {
@@ -207,8 +211,8 @@ impl Analyzer {
                     (Float, Bool) => BoolToFloat(Box::new(expr)),
                     (Float, Int) => IntToFloat(Box::new(expr)),
                     (Int, Bool) => BoolToInt(Box::new(expr)),
-                    (Float, Bool) => FloatToBool(Box::new(expr)),
-                    (Int, Bool) => IntToBool(Box::new(expr)),
+                    (Bool, Float) => FloatToBool(Box::new(expr)),
+                    (Bool, Int) => IntToBool(Box::new(expr)),
                     _ => return (expr, actual),
                 };
                 (
@@ -1369,7 +1373,7 @@ impl Analyzer {
                         }
                     }
                 }
-                Op::Not => todo!(),
+                Op::Not => unreachable!(),
                 Op::Or | Op::And | Op::Lt | Op::Lte | Op::Gt | Op::Gte => {
                     let converted =
                         self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, true);
@@ -1427,7 +1431,40 @@ impl Analyzer {
                     }
                 }
             },
-            Expr::Prefix(_, _) => todo!(),
+            Expr::Prefix(op, expr) => {
+                let e_pos = expr.pos;
+
+                // type already known for boolean expressions
+                let ty = match op {
+                    Op::Minus => {
+                        self.fresh_type_var(e_pos)
+                    },
+                    Op::Not => {
+                        TypeOrVar::Ty(SType::Primitve(Prim::Bool))
+                    },
+                    _ => unreachable!()
+                };
+
+                let converted = self.convert(*expr, ty, prev_locals, locals, fns, adts);
+
+                let l_ty_r = self.resolve_type(ty);
+
+                // need to know type of expr
+                if is_type_var(&l_ty_r) {
+                    self.type_errors.push(TypeError::TypeNeededError(e_pos));
+                    return None;
+                }
+                
+                // check type for minus operation
+                if matches!(op, Op::Minus) && !matches_numerical(&ty) {
+                    self.type_errors.push(TypeError::InvalidOperandError(e_pos));
+                    return None;
+                }
+
+                let expr = Prefix(op, Box::new(converted?));
+
+                self.add_constraint(expr, expected, ty, pos)?
+            },
             Expr::Let(pd, expr, after) => {
                 // Check for name conflicts. Allow variable shadowing
                 // If there is a name conflict, we try to continue using the new
