@@ -227,63 +227,54 @@ impl Analyzer {
         let expr = res.0;
         let c_actual = res.1;
 
-        match (r_expected, c_actual) {
-            (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => {
-                if self.types_ok(p, q) {
-                    Some(expr)
-                } else {
-                    self.type_errors.push(TypeError::TypeMismatch(
-                        self.stype_str(&p),
-                        self.stype_str(&q),
-                        pos,
-                    ));
-                    None
-                }
-            }
-            (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
-                // set root id in map to type
-                if !matches!(t, Top) {
-                    self.type_map.insert(r, t);
-                }
-
-                Some(expr)
-            }
-            (TypeOrVar::Var(r1, _), TypeOrVar::Var(r2, _)) => {
-                // union using data structure
-                self.unions.union(r1, r2);
-                Some(expr)
-
-                // no need to resolve again and check type, already done earlier
-
-                /*
-                let t1 = self.type_map.get(&r1);
-                let t2 = self.type_map.get(&r2);
-                // check that they match
-                match (t1, t2) {
-                    (None, Some(t)) | (Some(t), None) => {
-                        // set type of root to t
-                        self.type_map.insert(new_root, *t);
-                    }
-                    (Some(exp), Some(act)) => {
-                        // check if OK
-                        if !self.types_ok(*exp, *act) {
-                            self.type_errors.push(TypeError::TypeMismatch(
-                                self.stype_str(exp),
-                                self.stype_str(act),
-                                pos
-                            ));
-                        }
-
-                        // set type of root to expected type,
-                        // minimise less desirable error message later on
-                        self.type_map.insert(new_root, *exp);
-                    }
-                    _ => ()
-                }
-                */
-            }
+        if self.add_type_constraint(r_expected, c_actual, pos) {
+            Some(expr)
+        } else {
+            None
         }
     }
+
+        // Also handles implicit conversions.
+    fn add_type_constraint(
+            &mut self,
+            expected: TypeOrVar,
+            actual: TypeOrVar,
+            pos: PositionRange,
+        ) -> bool {
+            // useful imports
+            use crate::analysis::symbolic_ast::SType::*;
+    
+            let r_expected = self.resolve_type(expected);
+            let r_actual = self.resolve_type(actual);
+
+            match (r_expected, r_actual) {
+                (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => {
+                    if self.types_ok(p, q) {
+                        true
+                    } else {
+                        self.type_errors.push(TypeError::TypeMismatch(
+                            self.stype_str(&p),
+                            self.stype_str(&q),
+                            pos,
+                        ));
+                        false
+                    }
+                }
+                (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
+                    // set root id in map to type
+                    if !matches!(t, Top) {
+                        self.type_map.insert(r, t);
+                    }
+    
+                    true
+                }
+                (TypeOrVar::Var(r1, _), TypeOrVar::Var(r2, _)) => {
+                    // union using data structure
+                    self.unions.union(r1, r2);
+                    true
+                }
+            }
+        }
 
     // If error, just return Top
     fn transform_type(
@@ -314,6 +305,8 @@ impl Analyzer {
             None => self.fresh_type_var(id_pos),
         }
     }
+
+    
 
     fn add_fn_locals(
         &mut self,
@@ -951,15 +944,30 @@ impl Analyzer {
 
         let s_expr: SExprPos = match e.expr {
             Expr::Nested(e) => {
-                let stripped = self.scan_defs(*e, fns.clone(), adts.clone());
-                self.convert(
+                // we want a fresh map containing just the functions scanned here
+                let stripped = self.scan_defs(*e, TreeMap::new(), adts.clone());
+
+                // now combine
+                let mut fns_combined = fns.clone();
+                for f in stripped.1.into_iter() {
+                    fns_combined = fns_combined.insert((*f.0).clone(), *f.1)
+                }
+
+                let ret = self.convert(
                     stripped.0,
                     expected,
                     prev_locals,
                     &LocalsMap::new(),
                     &stripped.1,
                     &stripped.2,
-                )? // fresh locals
+                ); // fresh locals
+
+                // if any functions are not converted, convert them. Technically we do not need to convert them,
+                // but it's good to give the user more errors :P
+                for fn_id in stripped.1.into_iter() {
+                    self.transform_fn(fn_id.0, pos, &LocalsMap::new(), &stripped.1, &stripped.2)
+                };
+                ret?
             }
 
             Expr::FunDefn(_, after) => {

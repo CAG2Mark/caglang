@@ -148,7 +148,7 @@ fn print_error_at(
     let ansi_escpae_regex = Regex::new(r"\x1b\[\d\d?\d?(?:;\d\d?)*m").unwrap();
 
     let full_msg = format!("\x1b[1;{}m{}\x1b[0m: {}\n", color, severity, msg);
-
+    
     let match_len = ansi_escpae_regex.replace_all(&full_msg, "").len();
 
     let l = (match_len) / 2;
