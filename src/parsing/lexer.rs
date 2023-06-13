@@ -200,6 +200,21 @@ fn op_convert(cand: &str) -> Op {
     }
 }
 
+fn assignment_op_convert(cand: &str) -> AssignOp {
+    use crate::tokens::AssignOp::*;
+    match cand {
+        "+=" => AddEq,
+        "-=" => SubEq,
+        "*=" => TimesEq,
+        "/=" => DivEq,
+        "%=" => ModEq,
+        "||=" => OrEq,
+        "&&=" => AndEq,
+        "=" => Assign,
+        _ => unreachable!()
+    }
+}
+
 pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
     let mut ret: Vec<TokenPos> = Vec::new();
 
@@ -327,7 +342,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
                 let tk = if OPERATORS.contains(&val.as_str()) {
                     Token::Operator(op_convert(&val))
                 } else {
-                    Token::AssignmentOperator(val)
+                    Token::AssignmentOperator(assignment_op_convert(&val))
                 };
 
                 ret.push(TokenPos {

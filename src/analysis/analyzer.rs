@@ -9,6 +9,7 @@ use crate::parsing::position::*;
 use crate::analysis::symbolic_ast::SExpr::*;
 use crate::analysis::symbolic_ast::*;
 
+use crate::parsing::tokens::AssignOp;
 use crate::parsing::tokens::Op;
 use crate::parsing::tokens::Prim;
 use crate::util::union_find_int;
@@ -65,15 +66,15 @@ pub struct Analyzer {
 pub enum TypeError {
     TypeNeededError(PositionRange),
     InvalidOperandError(PositionRange),
+    NotAssignableError(PositionRange),
     TypeMismatch(String, String, PositionRange), // expected, actual, location
     InvalidBlockRetError(String, PositionRange, PositionRange), // name of ret type, position of ADT defn, position of expression
 }
 pub enum AnalysisError {
     LocalNotFoundError(String, PositionRange),
     FnNotFoundError(String, PositionRange),
-    TooManyArgsError(String, PositionRange), // fn name, fn pos, position of excess args
-    TooFewArgsError(String, PositionRange),  // fn name, fn pos, position of excess args
-    NoMemberError(String, String, PositionRange), // type name, member, pos
+    WrongNoArgsError(String, usize, usize, PositionRange), // fn name, expected, got, position of call
+    NoMemberError(String, String, PositionRange),          // type name, member, pos
     TypeNotFound(String, PositionRange),
     NameAlreadyUsedError(String, PositionRange, PositionRange), // name, offending position, original position
     VariableRedefError(String, PositionRange, PositionRange), // name, offending position, original position
@@ -85,14 +86,20 @@ pub enum AnalysisError {
     AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
 }
 
-fn matches_float(ty: TypeOrVar) -> bool {
+fn is_type_var(ty: &TypeOrVar) -> bool {
+    matches!(ty, TypeOrVar::Var(_, _))
+}
+fn matches_float(ty: &TypeOrVar) -> bool {
     matches!(ty, TypeOrVar::Ty(SType::Primitve(Prim::Float)))
 }
-fn matches_int(ty: TypeOrVar) -> bool {
+fn matches_int(ty: &TypeOrVar) -> bool {
     matches!(ty, TypeOrVar::Ty(SType::Primitve(Prim::Int)))
 }
-fn matches_bool(ty: TypeOrVar) -> bool {
+fn matches_bool(ty: &TypeOrVar) -> bool {
     matches!(ty, TypeOrVar::Ty(SType::Primitve(Prim::Bool)))
+}
+fn matches_number(ty: &TypeOrVar) -> bool {
+    matches_float(ty) || matches_int(ty)
 }
 
 impl Analyzer {
@@ -720,25 +727,27 @@ impl Analyzer {
         adts: &AdtMap,
     ) -> Option<Vec<SExprPos>> {
         let args_len = types.len();
-
-        // check args length correct
-        if args.len() > args_len {
-            self.name_errors
-                .push(AnalysisError::TooManyArgsError(qn.name.clone(), pos));
-            return None;
-        }
-        if args.len() < args_len {
-            self.name_errors
-                .push(AnalysisError::TooFewArgsError(qn.name.clone(), pos));
-            return None;
-        }
+        let actual_len = args.len();
 
         // type check args
         let mut transformed_args: Vec<Option<SExprPos>> = Vec::new();
 
+        // type check even if lengths are incompatible, do as much as possible
+        // zip will return the longest allowed array
         for (arg, ty) in zip(args, types) {
             // type checking occurs here
             transformed_args.push(self.convert(arg, *ty, prev_locals, locals, fns, adts));
+        }
+
+        // check args length correct
+        if actual_len != args_len {
+            self.name_errors.push(AnalysisError::WrongNoArgsError(
+                qn.name.clone(),
+                args_len,
+                actual_len,
+                pos,
+            ));
+            return None;
         }
 
         // transform options into exprs
@@ -844,7 +853,7 @@ impl Analyzer {
         if matches!(left_r, TypeOrVar::Var(_, _)) {
             self.type_errors.push(TypeError::TypeNeededError(e1_p));
             fail = true;
-        } else if !matches_float(left_r) && !matches_int(left_r) && !matches_bool(left_r) {
+        } else if !matches_float(&left_r) && !matches_int(&left_r) && !matches_bool(&left_r) {
             // both must be ints, floats or bools
             if error_on_neq {
                 self.type_errors.push(TypeError::InvalidOperandError(e1_p));
@@ -856,7 +865,7 @@ impl Analyzer {
         if matches!(right_r, TypeOrVar::Var(_, _)) {
             self.type_errors.push(TypeError::TypeNeededError(e2_p));
             fail = true;
-        } else if !matches_float(right_r) && !matches_int(right_r) && !matches_bool(right_r) {
+        } else if !matches_float(&right_r) && !matches_int(&right_r) && !matches_bool(&right_r) {
             if error_on_neq {
                 self.type_errors.push(TypeError::InvalidOperandError(e2_p));
             }
@@ -867,7 +876,7 @@ impl Analyzer {
             return Err(Some((s_e1, s_e2, left_r, right_r)));
         }
 
-        if matches_float(left_r) || matches_float(right_r) {
+        if matches_float(&left_r) || matches_float(&right_r) {
             let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
             let e1 = self.add_constraint_pos(s_e1, float_prim, left_r).unwrap();
             let e2 = self.add_constraint_pos(s_e2, float_prim, right_r).unwrap();
@@ -995,14 +1004,13 @@ impl Analyzer {
                         match id {
                             Some(id) => {
                                 let adt_def = self.adt_defs.get(id).unwrap();
-                                self.type_errors.push(
-                                    TypeError::InvalidBlockRetError(
-                                        name,
-                                        adt_def.name_pos,
-                                        pos)
-                                )
+                                self.type_errors.push(TypeError::InvalidBlockRetError(
+                                    name,
+                                    adt_def.name_pos,
+                                    pos,
+                                ))
                             }
-                            None => ()
+                            None => (),
                         }
                     }
                     _ => (),
@@ -1466,7 +1474,63 @@ impl Analyzer {
                     pos,
                 }
             }
-            Expr::AssignmentOp(_, _, _, _) => todo!(),
+            Expr::AssignmentOp(op, lhs, rhs, after) => {
+                let l_pos = lhs.pos;
+
+                // LHS must be a variable (for now)
+                if !matches!(lhs.expr, Expr::Variable(_)) {
+                    self.type_errors.push(TypeError::NotAssignableError(l_pos));
+                    return None;
+                };
+
+                let ty = self.fresh_type_var(l_pos);
+
+                let lhs = self.convert(*lhs, ty, prev_locals, locals, fns, adts);
+
+                let l_ty_r = self.resolve_type(ty);
+
+                // need to know type of LHS
+                if is_type_var(&l_ty_r) {
+                    self.type_errors.push(TypeError::TypeNeededError(l_pos));
+                    return None;
+                }
+
+                match op {
+                    AssignOp::AddEq
+                    | AssignOp::SubEq
+                    | AssignOp::TimesEq
+                    | AssignOp::DivEq
+                    | AssignOp::ModEq => {
+                        // must be numeric
+                        if !matches_number(&l_ty_r) {
+                            self.type_errors.push(TypeError::InvalidOperandError(l_pos));
+                            return None;
+                        }
+                    }
+                    AssignOp::OrEq | AssignOp::AndEq => {
+                        // must be bool
+                        if !matches_bool(&l_ty_r) {
+                            self.type_errors.push(TypeError::InvalidOperandError(l_pos));
+                            return None;
+                        }
+                    }
+                    AssignOp::Assign => ()
+                }
+
+                // LHS and RHS must be the same type, but RHS can implicitly convert.
+                let rhs = self.convert(*rhs, l_ty_r, prev_locals, locals, fns, adts);
+
+                let after = self.convert(*after, expected, prev_locals, locals, fns, adts);
+
+                let expr = SExpr::AssignmentOp(
+                    op,
+                    Box::new(lhs?),
+                    Box::new(rhs?),
+                    Box::new(after?),
+                );
+
+                self.add_constraint(expr, expected, ty, pos)?
+            }
             Expr::AdtDefn(_, _) => unreachable!(),
             Expr::FunDefId(id, pos, after) => {
                 // capture locals

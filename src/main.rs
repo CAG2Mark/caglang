@@ -43,7 +43,7 @@ fn last_non_whitespace(input: &String, end: usize) -> Option<usize> {
     }
 }
 
-fn print_ln_carets(input: &String, ln: usize, start: usize, end: usize, color: u32) {
+fn print_ln_carets(input: &String, ln: usize, start: usize, end: usize, color: u32, caret: &str) {
     let start_pos = match first_non_whitespace(input, start) {
         Some(v) => v,
         None => start,
@@ -67,7 +67,7 @@ fn print_ln_carets(input: &String, ln: usize, start: usize, end: usize, color: u
     }
     print!("\x1b[1;{color}m");
     for _ in start_pos..end_pos {
-        print!("^")
+        print!("{}", caret)
     }
     print!("\x1b[0m");
     print!("\n");
@@ -80,6 +80,7 @@ fn print_error_at(
     pos: &PositionRange,
     msg: &str,
     color: u32,
+    caret: &str
 ) {
     println!(
         "{}:{}:{}",
@@ -109,22 +110,22 @@ fn print_error_at(
     // print first line
     // also set start pos
     if start_ln == end_ln {
-        print_ln_carets(&first_ln, start_ln, pos.start.pos, pos.end.pos + 1, color);
+        print_ln_carets(&first_ln, start_ln, pos.start.pos, pos.end.pos + 1, color, caret);
     } else {
-        print_ln_carets(&first_ln, start_ln, pos.start.pos, first_ln.len(), color);
+        print_ln_carets(&first_ln, start_ln, pos.start.pos, first_ln.len(), color, caret);
     }
 
     if end_ln > 0 {
         // print in between lines
         for l in start_ln + 1..end_ln {
             let ln = chunks.get(l).unwrap().to_string();
-            print_ln_carets(&ln, l, 0, ln.len(), color);
+            print_ln_carets(&ln, l, 0, ln.len(), color, caret);
         }
     }
 
     // print last line, also set last line pos
     if start_ln != end_ln {
-        print_ln_carets(&last_ln, end_ln, 0, pos.end.pos + 1, color);
+        print_ln_carets(&last_ln, end_ln, 0, pos.end.pos + 1, color, caret);
 
         last_start = match first_non_whitespace(&last_ln, 0) {
             Some(v) => v,
@@ -207,14 +208,14 @@ fn print_parse_error(file_name: &String, input: &String, error: parser::ParseErr
                 got,
                 expected_to_str(expected)
             );
-            print_error_at(file_name, input, "fatal", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "fatal", &pos, &msg, ERR_COLOR, "^")
         }
         parser::ParseError::UnexpectedEOF(expected) => {
             let msg = "unexpected end of file";
             let dummy_inp = " ".to_string();
             let dummy_pos = single_posrange(0, 0);
             if input.len() == 0 {
-                print_error_at(file_name, &dummy_inp, "fatal", &dummy_pos, &msg, ERR_COLOR);
+                print_error_at(file_name, &dummy_inp, "fatal", &dummy_pos, &msg, ERR_COLOR, "^");
                 return;
             }
             let pos = lexer::string_index_to_pos(&chunks, input.len() - 1);
@@ -223,17 +224,17 @@ fn print_parse_error(file_name: &String, input: &String, error: parser::ParseErr
                 "unexpected end of file, possible token(s) contain {}",
                 expected_to_str(expected)
             );
-            print_error_at(file_name, input, "fatal", &pos_new, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "fatal", &pos_new, &msg, ERR_COLOR, "^");
         }
         parser::ParseError::UnexpectedEOFOther => {
             let msg = "unexpected end of file";
             let pos = lexer::string_index_to_pos(&chunks, input.len() - 1);
             let pos_new = single_posrange(pos.line_no, pos.pos + 1);
-            print_error_at(file_name, input, "fatal", &pos_new, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "fatal", &pos_new, &msg, ERR_COLOR, "^");
         }
         parser::ParseError::Unfinished(got, pos) => {
             let msg = format!("unexpected token {}", got);
-            print_error_at(file_name, input, "fatal", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "fatal", &pos, &msg, ERR_COLOR, "^");
         }
     }
 }
@@ -245,74 +246,71 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
                 "use of possibly unbound local variable \x1b[1m{}\x1b[0m",
                 name
             );
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::NoMemberError(ty, name, pos) => {
             let msg = format!("type \x1b[1m{}\x1b[0m has no member \x1b[1m{}\x1b[0m", ty, name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::VariableRedefError(name, offending, original) => {
             let hint_msg = format!("local \x1b[1m{}\x1b[0m originally defined here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("redefinition of local variable \x1b[1m{}\x1b[0m", name);
-            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::TypeNotFound(ty, pos) => {
             let msg = format!("type \x1b[1m{}\x1b[0m not found", ty);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::FnNotFoundError(name, pos) => {
             let msg = format!("could not find function \x1b[1m{}\x1b[0m", name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
-        analyzer::AnalysisError::TooManyArgsError(name, pos) => {
-            let msg = format!("too many arguments for function \x1b[1m{}\x1b[0m", name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR);
-        }
-        analyzer::AnalysisError::TooFewArgsError(name, pos) => {
-            let msg = format!("not enough arguments for \x1b[1m{}\x1b[0m", name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR);
+        analyzer::AnalysisError::WrongNoArgsError(name, expected, got, pos) => {
+            let s = if expected != 1 { "s" } else { "" };
+            let msg = format!("\x1b[1m{}\x1b[0m takes {} argument{s}, but {} were supplied", name, expected, got);
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
             let hint_msg = format!("name \x1b[1m{}\x1b[0m originally used here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("name \x1b[1m{}\x1b[0m is already used", name);
-            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::DuplicateMemberError(name, adt_name, offending, original) => {
             let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("member \x1b[1m{}\x1b[0m already exists in {}", name, adt_name);
-            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::DuplicateVariantError(name, adt_name, offending, original) => {
             let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR);
+            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("duplicate variant name \x1b[1m{}\x1b[0m of ADT {}", name, adt_name);
-            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::InvalidCtorError(pos) => {
             let msg = format!("not a valid constructor");
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::AdtNotFoundError(name, pos) => {
             let msg = format!("could not find ADT \x1b[1m{}\x1b[0m", name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::AdtVariantNotFoundError(name, variant, pos) => {
             let msg = format!("ADT \x1b[1m{}\x1b[0m has no variant \x1b[1m{}\x1b[0m", name, variant);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::AdtNoBaseError(name, pos, hint_pos) => {
             let hint_msg = format!("insert a \x1b[1mBase\x1b[0m variant");
-            print_error_at(file_name, input, "hint", &hint_pos, &hint_msg, HINT_COLOR);
+            print_error_at(file_name, input, "hint", &hint_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("ADT \x1b[1m{}\x1b[0m has no default variant", name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "-");
         },
     }
 }
@@ -324,25 +322,29 @@ fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeErr
     match error {
         analyzer::TypeError::TypeNeededError(pos) => {
             let msg = format!("type annotation needed");
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::TypeError::TypeMismatch(t1, t2, pos) => {
             let msg = format!(
                 "expected type \x1b[1m{}\x1b[0m, got \x1b[1m{}\x1b[0m",
                 t1, t2
             );
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
         analyzer::TypeError::InvalidOperandError(pos) => {
             let msg = format!("invalid operand");
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::TypeError::InvalidBlockRetError(name, adt_pos, pos) => {
             let hint_msg = format!("move this definition outside of the block");
-            print_error_at(file_name, input, "hint", &adt_pos, &hint_msg, HINT_COLOR);
+            print_error_at(file_name, input, "hint", &adt_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("this block has type \x1b[1m{}\x1b[0m, which is not visible from outside of this block", name);
-            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR)
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
+        }
+        analyzer::TypeError::NotAssignableError(pos) => {
+            let msg = format!("expression is not assignable");
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
     }
 }
@@ -394,6 +396,7 @@ fn main() {
                 &single_posrange(pos.line_no, pos.pos),
                 "invalid token",
                 ERR_COLOR,
+                "^"
             );
             std::process::exit(1)
         }

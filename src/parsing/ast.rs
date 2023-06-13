@@ -3,6 +3,8 @@ use crate::parsing::tokens::Op;
 use crate::parsing::tokens::Prim;
 use std::fmt;
 
+use super::tokens::AssignOp;
+
 // All WIP.
 
 pub struct ParamDef {
@@ -133,7 +135,7 @@ pub enum Expr {
     Infix(Op, Box<ExprPos>, Box<ExprPos>), // Op, left, right
     Prefix(Op, Box<ExprPos>),              // Op, expr
     Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
-    AssignmentOp(String, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
+    AssignmentOp(AssignOp, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
     AdtDefn(AdtDef, Box<ExprPos>),                                  // // adtdef, after
 
     // internal use for name analyzer

@@ -19,6 +19,18 @@ pub enum Op {
     Gte
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AssignOp {
+    AddEq,
+    SubEq,
+    TimesEq,
+    DivEq,
+    ModEq,
+    OrEq,
+    AndEq,
+    Assign
+}
+
 impl fmt::Display for Op {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
@@ -36,6 +48,21 @@ impl fmt::Display for Op {
             Op::Lte => write!(f, "<="),
             Op::Gt => write!(f, ">"),
             Op::Gte => write!(f, ">="),
+        }
+    }
+}
+
+impl fmt::Display for AssignOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            AssignOp::AddEq => write!(f, "+="),
+            AssignOp::SubEq => write!(f, "-="),
+            AssignOp::TimesEq => write!(f, "*="),
+            AssignOp::DivEq => write!(f, "/="),
+            AssignOp::ModEq => write!(f, "%="),
+            AssignOp::OrEq => write!(f, "||="),
+            AssignOp::AndEq => write!(f, "&&="),
+            AssignOp::Assign => write!(f, "="),
         }
     }
 }
@@ -97,7 +124,7 @@ pub enum Token {
     FloatLiteral(f64),
     StringLiteral(String),
     BoolLiteral(bool),
-    AssignmentOperator(String),
+    AssignmentOperator(AssignOp),
     Operator(Op),
     PrimType(Prim),
     Whitespace,

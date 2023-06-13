@@ -103,7 +103,7 @@ impl Parser {
         let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
-                AssignmentOperator(op) if op == "=" => Ok(tk.pos),
+                AssignmentOperator(AssignOp::Assign) => Ok(tk.pos),
                 _ => Err(ParseError::UnexpectedToken(
                     tk.to_str(),
                     vec![expected.to_string()],
@@ -226,7 +226,7 @@ impl Parser {
     fn skip_assignment_operator(
         &mut self,
         skip_exprsep: bool,
-    ) -> Result<(String, PositionRange), ParseError> {
+    ) -> Result<(AssignOp, PositionRange), ParseError> {
         let front = self.consume_maybe(skip_exprsep);
         match front {
             Some(tk) => match tk.tk {
@@ -422,12 +422,12 @@ impl Parser {
 
         // quick hack
         let mode;
-        let mut op_: String = "".to_string();
+        let mut op_: AssignOp = AssignOp::Assign;
 
         let body = match &between {
             Some(tk) => match &tk.tk {
                 AssignmentOperator(op) => {
-                    op_ = op.to_string();
+                    op_ = *op;
                     pos = tk.pos;
                     self.consume(true);
                     let e2 = self.parse_single_expr(skip_exprsep)?;
@@ -613,7 +613,7 @@ impl Parser {
 
         // does not contain sum type
         if !next_tk.is_some()
-            || !matches!(&next_tk.unwrap().tk, AssignmentOperator(op) if op == "=")
+            || !matches!(&next_tk.unwrap().tk, AssignmentOperator(AssignOp::Assign))
         {
             return Ok(AdtDef {
                 name: id.0,
@@ -712,7 +712,7 @@ impl Parser {
                 self.skip_equals(true)?;
                 Ok(ret)
             }
-            AssignmentOperator(op) if op == "=" => {
+            AssignmentOperator(AssignOp::Assign) => {
                 self.consume(true);
                 Ok(None)
             }
