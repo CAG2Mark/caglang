@@ -8,6 +8,8 @@ use parsing::lexer;
 use parsing::parser;
 use parsing::tokens;
 
+use regex::Regex;
+
 use crate::parsing::position::*;
 
 use std::fs::File;
@@ -143,15 +145,21 @@ fn print_error_at(
     // determine best position to print error msg
     let mut start = (last_start + last_end) / 2;
 
-    let l = (msg.len() + severity.len() + 2) / 2;
+    let ansi_escpae_regex = Regex::new(r"\x1b\[\d\d?\d?(?:;\d\d?)*m").unwrap();
+
+    let full_msg = format!("\x1b[1;{}m{}\x1b[0m: {}\n", color, severity, msg);
+
+    let match_len = ansi_escpae_regex.replace_all(&full_msg, "").len();
+
+    let l = (match_len) / 2;
 
     start = if start >= l { start - l } else { 0 };
     print!("      ");
     for _ in 0..start {
         print!(" ")
-    }
+    };
 
-    print!("\x1b[1;{}m{}\x1b[0m: {}\n", color, severity, msg);
+    println!("{}", full_msg);
 }
 
 fn expected_to_str(expected: Vec<String>) -> String {
