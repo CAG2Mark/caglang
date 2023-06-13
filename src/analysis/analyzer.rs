@@ -66,6 +66,7 @@ pub enum TypeError {
     TypeNeededError(PositionRange),
     InvalidOperandError(PositionRange),
     TypeMismatch(String, String, PositionRange), // expected, actual, location
+    InvalidBlockRetError(String, PositionRange, PositionRange), // name of ret type, position of ADT defn, position of expression
 }
 pub enum AnalysisError {
     LocalNotFoundError(String, PositionRange),
@@ -181,9 +182,14 @@ impl Analyzer {
     ) -> Option<SExprPos> {
         self.add_constraint(expr.expr, expected, actual, expr.pos)
     }
-    
+
     // returns converted expression, type of new expression
-    fn implicit_convert(&self, expr: SExprPos, expected: TypeOrVar, actual: TypeOrVar) -> (SExprPos, TypeOrVar) {
+    fn implicit_convert(
+        &self,
+        expr: SExprPos,
+        expected: TypeOrVar,
+        actual: TypeOrVar,
+    ) -> (SExprPos, TypeOrVar) {
         use crate::parsing::tokens::Prim::*;
 
         let pos = expr.pos;
@@ -196,14 +202,17 @@ impl Analyzer {
                     (Int, Bool) => BoolToInt(Box::new(expr)),
                     (Float, Bool) => FloatToBool(Box::new(expr)),
                     (Int, Bool) => IntToBool(Box::new(expr)),
-                    _ => return (expr, actual)
+                    _ => return (expr, actual),
                 };
-                (SExprPos {
-                    expr: new_expr,
-                    pos,
-                }, expected)
+                (
+                    SExprPos {
+                        expr: new_expr,
+                        pos,
+                    },
+                    expected,
+                )
             }
-            _ => (expr, actual)
+            _ => (expr, actual),
         }
     }
 
@@ -222,7 +231,7 @@ impl Analyzer {
         let r_expected = self.resolve_type(expected);
         let r_actual = self.resolve_type(actual);
 
-        let res = self.implicit_convert(SExprPos { expr, pos } , r_expected, r_actual);
+        let res = self.implicit_convert(SExprPos { expr, pos }, r_expected, r_actual);
 
         let expr = res.0;
         let c_actual = res.1;
@@ -234,47 +243,47 @@ impl Analyzer {
         }
     }
 
-        // Also handles implicit conversions.
+    // Also handles implicit conversions.
     fn add_type_constraint(
-            &mut self,
-            expected: TypeOrVar,
-            actual: TypeOrVar,
-            pos: PositionRange,
-        ) -> bool {
-            // useful imports
-            use crate::analysis::symbolic_ast::SType::*;
-    
-            let r_expected = self.resolve_type(expected);
-            let r_actual = self.resolve_type(actual);
+        &mut self,
+        expected: TypeOrVar,
+        actual: TypeOrVar,
+        pos: PositionRange,
+    ) -> bool {
+        // useful imports
+        use crate::analysis::symbolic_ast::SType::*;
 
-            match (r_expected, r_actual) {
-                (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => {
-                    if self.types_ok(p, q) {
-                        true
-                    } else {
-                        self.type_errors.push(TypeError::TypeMismatch(
-                            self.stype_str(&p),
-                            self.stype_str(&q),
-                            pos,
-                        ));
-                        false
-                    }
-                }
-                (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
-                    // set root id in map to type
-                    if !matches!(t, Top) {
-                        self.type_map.insert(r, t);
-                    }
-    
+        let r_expected = self.resolve_type(expected);
+        let r_actual = self.resolve_type(actual);
+
+        match (r_expected, r_actual) {
+            (TypeOrVar::Ty(p), TypeOrVar::Ty(q)) => {
+                if self.types_ok(p, q) {
                     true
-                }
-                (TypeOrVar::Var(r1, _), TypeOrVar::Var(r2, _)) => {
-                    // union using data structure
-                    self.unions.union(r1, r2);
-                    true
+                } else {
+                    self.type_errors.push(TypeError::TypeMismatch(
+                        self.stype_str(&p),
+                        self.stype_str(&q),
+                        pos,
+                    ));
+                    false
                 }
             }
+            (TypeOrVar::Ty(t), TypeOrVar::Var(r, _)) | (TypeOrVar::Var(r, _), TypeOrVar::Ty(t)) => {
+                // set root id in map to type
+                if !matches!(t, Top) {
+                    self.type_map.insert(r, t);
+                }
+
+                true
+            }
+            (TypeOrVar::Var(r1, _), TypeOrVar::Var(r2, _)) => {
+                // union using data structure
+                self.unions.union(r1, r2);
+                true
+            }
         }
+    }
 
     // If error, just return Top
     fn transform_type(
@@ -305,8 +314,6 @@ impl Analyzer {
             None => self.fresh_type_var(id_pos),
         }
     }
-
-    
 
     fn add_fn_locals(
         &mut self,
@@ -944,8 +951,8 @@ impl Analyzer {
 
         let s_expr: SExprPos = match e.expr {
             Expr::Nested(e) => {
-                // we want a fresh map containing just the functions scanned here
-                let stripped = self.scan_defs(*e, TreeMap::new(), adts.clone());
+                // we want a fresh map containing just the functions and adts scanned here
+                let stripped = self.scan_defs(*e, TreeMap::new(), TreeMap::new());
 
                 // now combine
                 let mut fns_combined = fns.clone();
@@ -953,20 +960,54 @@ impl Analyzer {
                     fns_combined = fns_combined.insert((*f.0).clone(), *f.1)
                 }
 
+                // now combine
+                let mut adts_combined = adts.clone();
+                for f in stripped.2.into_iter() {
+                    adts_combined = adts_combined.insert((*f.0).clone(), *f.1)
+                }
+
                 let ret = self.convert(
                     stripped.0,
                     expected,
                     prev_locals,
                     &LocalsMap::new(),
-                    &stripped.1,
-                    &stripped.2,
+                    &fns_combined,
+                    &adts_combined,
                 ); // fresh locals
 
                 // if any functions are not converted, convert them. Technically we do not need to convert them,
                 // but it's good to give the user more errors :P
                 for fn_id in stripped.1.into_iter() {
                     self.transform_fn(fn_id.0, pos, &LocalsMap::new(), &stripped.1, &stripped.2)
-                };
+                }
+
+                // if the return type is an ADT inside the nested block, return.
+                let r = self.resolve_type(expected);
+
+                match r {
+                    TypeOrVar::Ty(SType::UserType(v)) => {
+                        // If it was discovered in this block. Note that this only contains
+                        // outer definitions in this block (does not contain defns in any
+                        // nested blocks), but inductively, this guarantees that any returned ADT
+                        // is visible from the outside block.
+                        let name = self.id_map.get(&v).unwrap().clone();
+                        let id = stripped.2.get(&name);
+                        match id {
+                            Some(id) => {
+                                let adt_def = self.adt_defs.get(id).unwrap();
+                                self.type_errors.push(
+                                    TypeError::InvalidBlockRetError(
+                                        name,
+                                        adt_def.name_pos,
+                                        pos)
+                                )
+                            }
+                            None => ()
+                        }
+                    }
+                    _ => (),
+                }
+
                 ret?
             }
 
@@ -1412,15 +1453,18 @@ impl Analyzer {
                 let after =
                     self.convert(*after, expected, &more_prev_locals, &more_locals, fns, adts)?;
 
-                SExprPos { expr: SExpr::Let(
-                    SParamDef {
-                        name: new_local,
-                        ty: ty,
-                        pos: pd.nme_pos,
-                    },
-                    Box::new(body?),
-                    Box::new(after),
-                ), pos }
+                SExprPos {
+                    expr: SExpr::Let(
+                        SParamDef {
+                            name: new_local,
+                            ty: ty,
+                            pos: pd.nme_pos,
+                        },
+                        Box::new(body?),
+                        Box::new(after),
+                    ),
+                    pos,
+                }
             }
             Expr::AssignmentOp(_, _, _, _) => todo!(),
             Expr::AdtDefn(_, _) => unreachable!(),

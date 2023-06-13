@@ -389,7 +389,7 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
         }
         Expr::Ctor(qn, args) => {
             format!(
-                "new {}{}({})",
+                "{}new {}({})",
                 first_line_indents,
                 qn,
                 format_exprs(args, indent + 1)
