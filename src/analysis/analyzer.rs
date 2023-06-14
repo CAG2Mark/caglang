@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::zip;
 
-use crate::analysis::symbolic_ast;
 use crate::parsing::ast::*;
 use crate::parsing::position::*;
 
@@ -235,9 +234,6 @@ impl Analyzer {
         actual: TypeOrVar,
         pos: PositionRange,
     ) -> Option<SExprPos> {
-        // useful imports
-        use crate::analysis::symbolic_ast::SType::*;
-
         // resolve types
         let r_expected = self.resolve_type(expected);
         let r_actual = self.resolve_type(actual);
@@ -814,6 +810,8 @@ impl Analyzer {
     // Return spec:
     // OK: (e1, e2, is_float, is_top)
     // ERR: e1, e2, t1, t2.
+
+    // this really should be refactored...
     fn convert_maybe_float(
         &mut self,
         e1: ExprPos,

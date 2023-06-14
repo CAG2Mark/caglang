@@ -254,7 +254,7 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         }
         analyzer::AnalysisError::VariableRedefError(name, offending, original) => {
             let hint_msg = format!("local \x1b[1m{}\x1b[0m originally defined here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("redefinition of local variable \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
@@ -269,26 +269,27 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         }
         analyzer::AnalysisError::WrongNoArgsError(name, expected, got, pos) => {
             let s = if expected != 1 { "s" } else { "" };
-            let msg = format!("\x1b[1m{}\x1b[0m takes {} argument{s}, but {} were supplied", name, expected, got);
+            let were = if got != 1 { "were" } else { "was" };
+            let msg = format!("\x1b[1m{}\x1b[0m takes {} argument{s}, but {} {were} supplied", name, expected, got);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
             let hint_msg = format!("name \x1b[1m{}\x1b[0m originally used here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("name \x1b[1m{}\x1b[0m is already used", name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::DuplicateMemberError(name, adt_name, offending, original) => {
             let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("member \x1b[1m{}\x1b[0m already exists in {}", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::DuplicateVariantError(name, adt_name, offending, original) => {
             let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
-            print_error_at(file_name, input, "hint", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("duplicate variant name \x1b[1m{}\x1b[0m of ADT {}", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
@@ -307,7 +308,7 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         },
         analyzer::AnalysisError::AdtNoBaseError(name, pos, hint_pos) => {
             let hint_msg = format!("insert a \x1b[1mBase\x1b[0m variant");
-            print_error_at(file_name, input, "hint", &hint_pos, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "note", &hint_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("ADT \x1b[1m{}\x1b[0m has no default variant", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "-");
@@ -337,7 +338,7 @@ fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeErr
         }
         analyzer::TypeError::InvalidBlockRetError(name, adt_pos, pos) => {
             let hint_msg = format!("move this definition outside of the block");
-            print_error_at(file_name, input, "hint", &adt_pos, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "fix", &adt_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("this block has type \x1b[1m{}\x1b[0m, which is not visible from outside of this block", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");

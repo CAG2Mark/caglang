@@ -54,7 +54,7 @@ pub struct SPatternPos {
 
 pub enum SPattern {
     WildcardPattern,
-    IdOrAdtPattern(Identifier), // cannot distinguish between IDs and ADT variants with no parameters
+    IdPattern(Identifier),
     IntLiteralPattern(i64),
     FloatLiteralPattern(f64),
     StringLiteralPattern(String),
