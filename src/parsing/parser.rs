@@ -1263,7 +1263,7 @@ impl Parser {
         let next = self.peek_front_strict(true)?;
 
         // Something => ...
-        if qn.members.is_empty() && qn.members.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
+        if qn.scopes.is_empty() && qn.members.is_empty() && !matches!(&next.tk, Delimiter(d) if d == "(") {
             return Ok(PatternPos { pat: IdOrAdtPattern(qn.name), pos: qn.name_pos } );
         }
 

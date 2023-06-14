@@ -48,8 +48,8 @@ pub struct SAdtDef {
 }
 
 pub struct SPatternPos {
-    pat: SPattern,
-    pos: PositionRange
+    pub pat: SPattern,
+    pub pos: PositionRange
 }
 
 pub enum SPattern {
@@ -59,7 +59,7 @@ pub enum SPattern {
     FloatLiteralPattern(f64),
     StringLiteralPattern(String),
     BoolLiteralPattern(bool),
-    AdtPattern(Identifier, Vec<SPatternPos>),
+    AdtPattern(Identifier, Identifier, Vec<SPatternPos>), // adt id, ctor id, args
 }
 
 pub struct SMatchCase {

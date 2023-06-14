@@ -77,7 +77,9 @@ pub enum AnalysisError {
     TypeNotFound(String, PositionRange),
     NameAlreadyUsedError(String, PositionRange, PositionRange), // name, offending position, original position
     VariableRedefError(String, PositionRange, PositionRange), // name, offending position, original position
-    DuplicateMemberError(String, String, PositionRange, PositionRange), // name, offending position, original position
+    DuplicateMemberError(String, String, PositionRange, PositionRange), // adt name, name, offending position, original position
+    DuplicateArgError(String, PositionRange),                           // name, offending position
+    DuplicatePatIdError(String, PositionRange, PositionRange), // name, offending position, original position
     DuplicateVariantError(String, String, PositionRange, PositionRange), // name, offending position, original position
     InvalidCtorError(PositionRange),
     AdtNotFoundError(String, PositionRange),
@@ -492,9 +494,7 @@ impl Analyzer {
         }
     }
 
-    fn convert_adt(&mut self, defn: AdtDef, adts: &AdtMap) -> SAdtDef {
-        let id = self.fresh_id(defn.name.clone(), defn.name_pos);
-
+    fn convert_adt(&mut self, id: Identifier, defn: AdtDef, adts: &AdtMap) -> SAdtDef {
         let mut name_map: HashMap<String, Identifier> = HashMap::new();
         let mut name_pos_map: HashMap<String, PositionRange> = HashMap::new();
 
@@ -645,7 +645,7 @@ impl Analyzer {
                 let id = *adts.get(&defn.name).unwrap();
 
                 if !self.adt_defs.contains_key(&id) {
-                    let converted = self.convert_adt(defn, adts);
+                    let converted = self.convert_adt(id, defn, adts);
                     self.adt_defs.insert(id, converted);
                 }
 
@@ -658,20 +658,26 @@ impl Analyzer {
                 if self.fun_defs.contains_key(&id) {
                     self.scan_defs_rec(*next, fns, adts)
                 } else {
-                    let new_params = defn
-                        .params
-                        .iter()
-                        .map(|p| {
-                            (
-                                p.name.to_string(),
-                                SParamDef {
-                                    name: self.fresh_id(p.name.to_string(), p.nme_pos),
-                                    ty: self.transform_type(&p.ty, p.nme_pos, &adts),
-                                    pos: p.nme_pos,
-                                },
-                            )
-                        })
-                        .collect();
+                    let mut new_params: Vec<(String, SParamDef)> = vec![];
+                    let mut names: HashSet<String> = HashSet::new(); // check for duplicate param names
+
+                    for p in defn.params {
+                        if names.contains(&p.name) {
+                            self.name_errors
+                                .push(AnalysisError::DuplicateArgError(p.name.clone(), p.nme_pos));
+                        }
+
+                        let id = self.fresh_id(p.name.clone(), p.nme_pos);
+                        names.insert(p.name.clone());
+                        new_params.push((
+                            p.name,
+                            SParamDef {
+                                name: id,
+                                ty: self.transform_type(&p.ty, p.nme_pos, &adts),
+                                pos: p.nme_pos,
+                            },
+                        ))
+                    }
 
                     let name_pos = defn.name_pos;
 
@@ -715,6 +721,75 @@ impl Analyzer {
         }
     }
 
+    fn find_ctor(
+        &mut self,
+        qn: &QualifiedName,
+        adts: &AdtMap,
+        report_error: bool,
+    ) -> Option<(&SAdtDef, &SAdtVariant)> {
+        // no support for importing scopes yet
+        if qn.scopes.len() >= 2 {
+            unimplemented!();
+        }
+
+        let adt_name = if qn.scopes.len() == 0 {
+            (qn.name.clone(), qn.name_pos)
+        } else {
+            qn.scopes.last().unwrap().clone()
+        };
+
+        let ctor_name = if qn.scopes.len() == 0 {
+            ("Base".to_string(), qn.name_pos)
+        } else {
+            (qn.name.clone(), qn.name_pos)
+        };
+
+        // resolve name of adt
+        let adt_id = *match adts.get(&adt_name.0) {
+            Some(id) => id,
+            None => {
+                if report_error {
+                    // error
+                    self.name_errors
+                        .push(AnalysisError::AdtNotFoundError(adt_name.0, adt_name.1))
+                }
+                return None;
+            }
+        };
+
+        let adt_def = self.adt_defs.get(&adt_id).unwrap();
+
+        // resolve ctor
+        let ctor_id = *match adt_def.variant_name_map.get(&ctor_name.0) {
+            Some(id) => id,
+            None => {
+                // error
+
+                if report_error {
+                    if qn.scopes.len() == 0 {
+                        self.name_errors.push(AnalysisError::AdtNoBaseError(
+                            adt_name.0,
+                            adt_name.1,
+                            adt_def.name_pos,
+                        ));
+                    } else {
+                        self.name_errors
+                            .push(AnalysisError::AdtVariantNotFoundError(
+                                adt_name.0,
+                                ctor_name.0,
+                                ctor_name.1,
+                            ));
+                    }
+                }
+                return None;
+            }
+        };
+
+        let ctor = adt_def.variants.get(&ctor_id).unwrap();
+
+        Some((adt_def, ctor))
+    }
+
     fn convert_args(
         &mut self,
         args: Vec<ExprPos>,
@@ -742,7 +817,7 @@ impl Analyzer {
         // check args length correct
         if actual_len != args_len {
             self.name_errors.push(AnalysisError::WrongNoArgsError(
-                qn.name.clone(),
+                qn.to_string(),
                 args_len,
                 actual_len,
                 pos,
@@ -884,54 +959,198 @@ impl Analyzer {
             let e2 = self.add_constraint_pos(s_e2, float_prim, right_r).unwrap();
 
             Ok((e1, e2, true, false))
-
-            /*
-            fn implicit_float(s_e: SExprPos, ty: TypeOrVar, r: TyConstraintRes) -> SExprPos {
-                let pos = s_e.pos;
-
-                // implicit conversions
-                if matches!(r, TyConstraintRes::ImplicitConv) {
-                    if matches_int(ty) {
-                        SExprPos {
-                            expr: IntToFloat(Box::new(s_e)),
-                            pos,
-                        }
-                    } else {
-                        SExprPos {
-                            expr: BoolToFloat(Box::new(s_e)),
-                            pos,
-                        }
-                    }
-                } else {
-                    //
-                    s_e
-                }
-            }
-            */
         } else {
             // both are integers
             let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
             let e1 = self.add_constraint_pos(s_e1, int_prim, left_r).unwrap();
             let e2 = self.add_constraint_pos(s_e2, int_prim, right_r).unwrap();
 
-            /*
-            fn implicit_int(s_e: SExprPos, r: TyConstraintRes) -> SExprPos {
-                let pos = s_e.pos;
+            Ok((e1, e2, false, false))
+        }
+    }
 
-                // implicit conversions
-                if matches!(r, TyConstraintRes::ImplicitConv) {
-                    SExprPos {
-                        expr: BoolToInt(Box::new(s_e)),
-                        pos,
+    fn convert_adt_pat(
+        &mut self,
+        qn: QualifiedName,
+        adts: &AdtMap,
+        pats: Vec<PatternPos>,
+        cur_locals: &LocalsMap,
+        pos: PositionRange,
+    ) -> Option<(SPatternPos, LocalsMap)> {
+        let name = qn.to_string();
+
+        let (adt_def, ctor) = self.find_ctor(&qn, adts, true)?;
+
+        let adt_id = adt_def.name;
+        let ctor_id = ctor.name;
+
+        // We allow matching using *all* parameters, including the invariant ones of the ADT,
+        // or just the parameters of a certain variant.
+        //
+        // If we have:
+        // adt A(a, b) = VarA(c), VarB(d)
+        //
+        // then
+        // A::VarA(pat)
+        // is equivalent to
+        // A::VarA(_, _, c)
+        // where the first two _ are bound to a and b.
+        let p1_len = adt_def.params.len();
+        let p2_len = ctor.params.len();
+
+        let adt_ty: Vec<TypeOrVar> = adt_def.params.iter().map(|p| p.ty).collect();
+        let ctor_ty: Vec<TypeOrVar> = ctor.params.iter().map(|p| p.ty).collect();
+        
+        let types = if pats.len() == p1_len + p2_len {
+            vec![adt_ty, ctor_ty].concat()
+        } else if pats.len() == p2_len {
+            ctor_ty
+        } else {
+            self.name_errors.push(AnalysisError::WrongNoArgsError(
+                name,
+                p2_len,
+                pats.len(),
+                pos,
+            ));
+            return None;
+        };
+
+        let mut new_pats: Vec<SPatternPos> = vec![];
+        let mut more_locals = cur_locals.clone();
+
+        // zip patterns and expected types, and type check
+        for (pat, ty) in zip(pats, types) {
+            let maybe = self.check_and_bind(adts, pat, ty, &more_locals);
+
+            if maybe.is_none() {
+                continue;
+            }
+
+            let (s_pat, more) = maybe.unwrap();
+
+            more_locals = more;
+            new_pats.push(s_pat);
+        }
+
+        Some((
+            SPatternPos {
+                pat: SPattern::AdtPattern(adt_id, ctor_id, new_pats),
+                pos,
+            },
+            more_locals
+        ))
+    }
+
+    fn check_and_bind(
+        &mut self,
+        adts: &AdtMap,
+        pat: PatternPos,
+        expected: TypeOrVar,
+        cur_locals: &LocalsMap,
+    ) -> Option<(SPatternPos, LocalsMap)> {
+        match pat.pat {
+            Pattern::WildcardPattern => Some((
+                SPatternPos {
+                    pat: SPattern::WildcardPattern,
+                    pos: pat.pos,
+                },
+                cur_locals.clone(),
+            )),
+            Pattern::IdOrAdtPattern(name) => {
+                // pseudo qualified name to check for constructors
+                let qn = QualifiedName {
+                    scopes: vec![],
+                    name: name.clone(),
+                    name_pos: pat.pos,
+                    members: vec![],
+                };
+
+                let opt = self.find_ctor(&qn, adts, false);
+
+                match opt {
+                    Some((_, _)) => {
+                        // simple case, ADT def with no arguments.
+                        self.convert_adt_pat(qn, adts, vec![], cur_locals, pat.pos)
                     }
-                } else {
-                    //
-                    s_e
+                    None => {
+                        // If local already has name, error
+                        if cur_locals.contains_key(&name) {
+                            let id = cur_locals.get(&name).unwrap();
+                            let og_pos = self.id_pos_map.get(&id.0).unwrap();
+                            self.name_errors.push(AnalysisError::DuplicatePatIdError(
+                                name.clone(),
+                                pat.pos,
+                                *og_pos,
+                            ))
+                        }
+
+                        // is ID otherwise
+                        let local = self.fresh_id(name.clone(), pat.pos);
+                        Some((
+                            SPatternPos {
+                                pat: SPattern::IdPattern(local),
+                                pos: pat.pos,
+                            },
+                            cur_locals.insert(name, (local, expected)), // has expected type
+                        ))
+                    }
                 }
             }
-            */
+            Pattern::IntLiteralPattern(v) => {
+                let int_lit = TypeOrVar::Ty(SType::Primitve(Prim::Int));
 
-            Ok((e1, e2, false, false))
+                self.add_type_constraint(expected, int_lit, pat.pos);
+
+                Some((
+                    SPatternPos {
+                        pat: SPattern::IntLiteralPattern(v),
+                        pos: pat.pos,
+                    },
+                    cur_locals.clone(),
+                ))
+            }
+            Pattern::FloatLiteralPattern(v) => {
+                let lit = TypeOrVar::Ty(SType::Primitve(Prim::Float));
+
+                self.add_type_constraint(expected, lit, pat.pos);
+
+                Some((
+                    SPatternPos {
+                        pat: SPattern::FloatLiteralPattern(v),
+                        pos: pat.pos,
+                    },
+                    cur_locals.clone(),
+                ))
+            }
+            Pattern::StringLiteralPattern(v) => {
+                let lit = TypeOrVar::Ty(SType::Primitve(Prim::String));
+
+                self.add_type_constraint(expected, lit, pat.pos);
+
+                Some((
+                    SPatternPos {
+                        pat: SPattern::StringLiteralPattern(v.clone()),
+                        pos: pat.pos,
+                    },
+                    cur_locals.clone(),
+                ))
+            }
+            Pattern::BoolLiteralPattern(v) => {
+                let lit = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
+
+                self.add_type_constraint(expected, lit, pat.pos);
+
+                Some((
+                    SPatternPos {
+                        pat: SPattern::BoolLiteralPattern(v),
+                        pos: pat.pos,
+                    },
+                    cur_locals.clone(),
+                ))
+            }
+            Pattern::AdtPattern(qn, pats) => {
+                self.convert_adt_pat(qn, adts, pats, cur_locals, pat.pos)
+            }
         }
     }
 
@@ -1027,7 +1246,7 @@ impl Analyzer {
             Expr::Variable(nme) => {
                 // not yet implemented
                 if !nme.scopes.is_empty() {
-                    todo!();
+                    unimplemented!();
                 }
 
                 // 1. Check if in locals map
@@ -1152,60 +1371,10 @@ impl Analyzer {
                 // NOTE: Adt() actually calls Adt::Base(). We need to handle this.
 
                 // no support for importing scopes yet
-                if qn.scopes.len() >= 2 {
-                    todo!();
-                }
+                let (adt_def, ctor) = self.find_ctor(&qn, adts, true)?;
 
-                let adt_name = if qn.scopes.len() == 0 {
-                    (qn.name.clone(), qn.name_pos)
-                } else {
-                    qn.scopes.last().unwrap().clone()
-                };
-
-                let ctor_name = if qn.scopes.len() == 0 {
-                    ("Base".to_string(), qn.name_pos)
-                } else {
-                    (qn.name.clone(), qn.name_pos)
-                };
-
-                // resolve name of adt
-                let adt_id = *match adts.get(&adt_name.0) {
-                    Some(id) => id,
-                    None => {
-                        // error
-                        self.name_errors
-                            .push(AnalysisError::AdtNotFoundError(adt_name.0, adt_name.1));
-                        return None;
-                    }
-                };
-
-                let adt_def = self.adt_defs.get(&adt_id).unwrap();
-
-                // resolve ctor
-                let ctor_id = *match adt_def.variant_name_map.get(&ctor_name.0) {
-                    Some(id) => id,
-                    None => {
-                        // error
-
-                        if qn.scopes.len() == 0 {
-                            self.name_errors.push(AnalysisError::AdtNoBaseError(
-                                adt_name.0,
-                                adt_name.1,
-                                adt_def.name_pos,
-                            ));
-                        } else {
-                            self.name_errors
-                                .push(AnalysisError::AdtVariantNotFoundError(
-                                    adt_name.0,
-                                    ctor_name.0,
-                                    ctor_name.1,
-                                ));
-                        }
-                        return None;
-                    }
-                };
-
-                let ctor = adt_def.variants.get(&ctor_id).unwrap();
+                let adt_id = adt_def.name;
+                let ctor_id = ctor.name;
 
                 // check args
                 let mut types: Vec<TypeOrVar> = vec![];
@@ -1295,7 +1464,57 @@ impl Analyzer {
                     pos,
                 }
             }
-            Expr::Match(_, _) => todo!(),
+            Expr::Match(scrut, cases) => {
+                // Find scrut type. Must be known
+                let scrut_ty = self.fresh_type_var(scrut.pos);
+
+                let scrut_pos = scrut.pos;
+
+                // Convert.
+                let s_scrut = self.convert(*scrut, scrut_ty, prev_locals, locals, fns, adts);
+
+                let ty = self.resolve_type(scrut_ty);
+
+                if is_type_var(&ty) {
+                    self.type_errors.push(TypeError::TypeNeededError(scrut_pos));
+                }
+
+                let mut fail = false;
+                let mut s_cases: Vec<SMatchCase> = vec![];
+
+                // for each matchcase, convert the pattern
+                for case in cases {
+                    // convert
+                    let maybe = self.check_and_bind(adts, case.pat, expected, locals);
+                    if maybe.is_none() {
+                        fail = true;
+                        continue;
+                    }
+                    // evaluate body using new locals
+                    let (s_pat, more_locals) = maybe.unwrap();
+                    let s_body =
+                        self.convert(case.body, expected, prev_locals, &more_locals, fns, adts);
+
+                    if s_body.is_none() {
+                        fail = true;
+                        continue;
+                    }
+
+                    s_cases.push(SMatchCase {
+                        pat: s_pat,
+                        body: s_body.unwrap(),
+                    });
+                }
+
+                if !fail {
+                    SExprPos {
+                        expr: SExpr::Match(Box::new(s_scrut?), s_cases),
+                        pos,
+                    }
+                } else {
+                    return None;
+                }
+            }
             Expr::While(cond, body) => {
                 let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
@@ -1434,13 +1653,9 @@ impl Analyzer {
 
                 // type already known for boolean expressions
                 let ty = match op {
-                    Op::Minus => {
-                        self.fresh_type_var(e_pos)
-                    },
-                    Op::Not => {
-                        TypeOrVar::Ty(SType::Primitve(Prim::Bool))
-                    },
-                    _ => unreachable!()
+                    Op::Minus => self.fresh_type_var(e_pos),
+                    Op::Not => TypeOrVar::Ty(SType::Primitve(Prim::Bool)),
+                    _ => unreachable!(),
                 };
 
                 let converted = self.convert(*expr, ty, prev_locals, locals, fns, adts);
@@ -1452,7 +1667,7 @@ impl Analyzer {
                     self.type_errors.push(TypeError::TypeNeededError(e_pos));
                     return None;
                 }
-                
+
                 // check type for minus operation
                 if matches!(op, Op::Minus) && !matches_numerical(&ty) {
                     self.type_errors.push(TypeError::InvalidOperandError(e_pos));
@@ -1462,7 +1677,7 @@ impl Analyzer {
                 let expr = Prefix(op, Box::new(converted?));
 
                 self.add_constraint(expr, expected, ty, pos)?
-            },
+            }
             Expr::Let(pd, expr, after) => {
                 // Check for name conflicts. Allow variable shadowing
                 // If there is a name conflict, we try to continue using the new
@@ -1549,7 +1764,7 @@ impl Analyzer {
                             return None;
                         }
                     }
-                    AssignOp::Assign => ()
+                    AssignOp::Assign => (),
                 }
 
                 // LHS and RHS must be the same type, but RHS can implicitly convert.
@@ -1557,12 +1772,8 @@ impl Analyzer {
 
                 let after = self.convert(*after, expected, prev_locals, locals, fns, adts);
 
-                let expr = SExpr::AssignmentOp(
-                    op,
-                    Box::new(lhs?),
-                    Box::new(rhs?),
-                    Box::new(after?),
-                );
+                let expr =
+                    SExpr::AssignmentOp(op, Box::new(lhs?), Box::new(rhs?), Box::new(after?));
 
                 self.add_constraint(expr, expected, ty, pos)?
             }

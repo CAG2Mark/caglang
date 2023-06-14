@@ -311,7 +311,18 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             print_error_at(file_name, input, "note", &hint_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("ADT \x1b[1m{}\x1b[0m has no default variant", name);
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
+        },
+        analyzer::AnalysisError::DuplicateArgError(name, pos) => {
+            let msg = format!("duplicate parameter \x1b[1m{}\x1b[0m", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "-");
+        },
+        analyzer::AnalysisError::DuplicatePatIdError(name, pos, og_pos) => {
+            let hint_msg = format!("name already used here");
+            print_error_at(file_name, input, "note", &og_pos, &hint_msg, HINT_COLOR, "-");
+
+            let msg = format!("identifier with name \x1b[1m{}\x1b[0m has already been bound", name);
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
     }
 }
