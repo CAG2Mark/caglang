@@ -243,55 +243,55 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
     match error {
         analyzer::AnalysisError::LocalNotFoundError(name, pos) => {
             let msg = format!(
-                "use of possibly unbound local variable \x1b[1m{}\x1b[0m",
+                "use of possibly unbound local variable `\x1b[1m{}\x1b[0m`",
                 name
             );
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::NoMemberError(ty, name, pos) => {
-            let msg = format!("type \x1b[1m{}\x1b[0m has no member \x1b[1m{}\x1b[0m", ty, name);
+            let msg = format!("type `\x1b[1m{}\x1b[0m` has no member `\x1b[1m{}\x1b[0m`", ty, name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::VariableRedefError(name, offending, original) => {
-            let hint_msg = format!("local \x1b[1m{}\x1b[0m originally defined here", name);
+            let hint_msg = format!("local `\x1b[1m{}\x1b[0m` originally defined here", name);
             print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("redefinition of local variable \x1b[1m{}\x1b[0m", name);
+            let msg = format!("redefinition of local variable `\x1b[1m{}\x1b[0m`", name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::TypeNotFound(ty, pos) => {
-            let msg = format!("type \x1b[1m{}\x1b[0m not found", ty);
+            let msg = format!("type `\x1b[1m{}\x1b[0m` not found", ty);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::FnNotFoundError(name, pos) => {
-            let msg = format!("could not find function \x1b[1m{}\x1b[0m", name);
+            let msg = format!("could not find function `\x1b[1m{}\x1b[0m`", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::WrongNoArgsError(name, expected, got, pos) => {
             let s = if expected != 1 { "s" } else { "" };
             let were = if got != 1 { "were" } else { "was" };
-            let msg = format!("\x1b[1m{}\x1b[0m takes {} argument{s}, but {} {were} supplied", name, expected, got);
+            let msg = format!("`\x1b[1m{}\x1b[0m` takes {} argument{s}, but {} {were} supplied", name, expected, got);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
-            let hint_msg = format!("name \x1b[1m{}\x1b[0m originally used here", name);
+            let hint_msg = format!("name `\x1b[1m{}\x1b[0m` originally used here", name);
             print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("name \x1b[1m{}\x1b[0m is already used", name);
+            let msg = format!("name `\x1b[1m{}\x1b[0m` is already used", name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::DuplicateMemberError(name, adt_name, offending, original) => {
-            let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
+            let hint_msg = format!("name `\x1b[1m{}\x1b[0m` already used here", name);
             print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("member \x1b[1m{}\x1b[0m already exists in {}", name, adt_name);
+            let msg = format!("member `\x1b[1m{}\x1b[0m` already exists in {}", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::DuplicateVariantError(name, adt_name, offending, original) => {
-            let hint_msg = format!("name \x1b[1m{}\x1b[0m already used here", name);
+            let hint_msg = format!("name `\x1b[1m{}\x1b[0m` already used here", name);
             print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("duplicate variant name \x1b[1m{}\x1b[0m of ADT {}", name, adt_name);
+            let msg = format!("duplicate variant name `\x1b[1m{}\x1b[0m` of ADT `\x1b[1m{}\x1b[0m`", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::InvalidCtorError(pos) => {
@@ -299,29 +299,29 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::AdtNotFoundError(name, pos) => {
-            let msg = format!("could not find ADT \x1b[1m{}\x1b[0m", name);
+            let msg = format!("could not find ADT `\x1b[1m{}\x1b[0m`", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::AdtVariantNotFoundError(name, variant, pos) => {
-            let msg = format!("ADT \x1b[1m{}\x1b[0m has no variant \x1b[1m{}\x1b[0m", name, variant);
+            let msg = format!("ADT `\x1b[1m{}\x1b[0m` has no variant `\x1b[1m{}\x1b[0m`", name, variant);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::AdtNoBaseError(name, pos, hint_pos) => {
             let hint_msg = format!("insert a \x1b[1mBase\x1b[0m variant");
             print_error_at(file_name, input, "note", &hint_pos, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("ADT \x1b[1m{}\x1b[0m has no default variant", name);
+            let msg = format!("ADT `\x1b[1m{}\x1b[0m` has no default variant", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::DuplicateArgError(name, pos) => {
-            let msg = format!("duplicate parameter \x1b[1m{}\x1b[0m", name);
+            let msg = format!("duplicate parameter `\x1b[1m{}\x1b[0m`", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "-");
         },
         analyzer::AnalysisError::DuplicatePatIdError(name, pos, og_pos) => {
             let hint_msg = format!("name already used here");
             print_error_at(file_name, input, "note", &og_pos, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("identifier with name \x1b[1m{}\x1b[0m has already been bound", name);
+            let msg = format!("identifier with name `\x1b[1m{}\x1b[0m` has already been bound", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
     }
@@ -338,7 +338,7 @@ fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeErr
         }
         analyzer::TypeError::TypeMismatch(t1, t2, pos) => {
             let msg = format!(
-                "expected type \x1b[1m{}\x1b[0m, got \x1b[1m{}\x1b[0m",
+                "expected type `\x1b[1m{}\x1b[0m`, got `\x1b[1m{}\x1b[0m`",
                 t1, t2
             );
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
@@ -351,7 +351,7 @@ fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeErr
             let hint_msg = format!("move this definition outside of the block");
             print_error_at(file_name, input, "fix", &adt_pos, &hint_msg, HINT_COLOR, "-");
 
-            let msg = format!("this block has type \x1b[1m{}\x1b[0m, which is not visible from outside of this block", name);
+            let msg = format!("this block has type `\x1b[1m{}\x1b[0m`, which is not visible from outside of this block", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         }
         analyzer::TypeError::NotAssignableError(pos) => {
