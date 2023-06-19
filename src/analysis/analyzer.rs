@@ -145,7 +145,7 @@ pub enum AnalysisError {
     AdtNotFoundError(String, PositionRange),
     AdtVariantNotFoundError(String, String, PositionRange), // adt name, adt variant name, position
     AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
-    MatchNotExhaustiveErr(String, PositionRange), // candidate, position
+    MatchNotExhaustiveErr(String, PositionRange),         // candidate, position
 }
 
 fn is_type_var(ty: &TypeOrVar) -> bool {
@@ -201,7 +201,7 @@ impl Analyzer {
             Witness::Adt(id, variant, wits) => {
                 let adt_name = self.id_map.get(id).unwrap().to_owned();
                 let var_name = self.id_map.get(variant).unwrap();
-                
+
                 let mut wit_str = "".to_string();
                 let mut first = true;
 
@@ -215,7 +215,7 @@ impl Analyzer {
                 }
 
                 adt_name + "::" + var_name + "(" + &wit_str + ")"
-            },
+            }
         }
     }
 
@@ -1060,6 +1060,7 @@ impl Analyzer {
             return Err(Some((s_e1, s_e2, left_r, right_r)));
         }
 
+        // remaining case handling
         if matches_float(&left_r) || matches_float(&right_r) {
             let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
             let e1 = self.add_constraint_pos(s_e1, float_prim, left_r).unwrap();
@@ -1451,6 +1452,65 @@ impl Analyzer {
 
         // Inductive case.
 
+        // (!!) Important trick to make the running time proportional to the number of match arms,
+        //      and NOT exponential in the depth/branching factor of the adts.
+        //
+        // If there is one identifier or wildcard pattern in the first column, we can just pop that from the pat stacks
+        // and compute the remaining recursively.
+
+        let has_wildcard = pat_stacks.iter().any(|p| {
+            matches!(
+                p.first().unwrap().pat,
+                SPattern::WildcardPattern | SPattern::IdPattern(_)
+            )
+        });
+
+        if has_wildcard {
+            // Create new pat stacks.
+            let mut new_pat_stacks: Vec<Vec<&'a SPatternPos>> = vec![];
+
+            for p in pat_stacks {
+                let mut new_stack:Vec<&'a SPatternPos> = vec![];
+                for i in 1..p.len() {
+                    new_stack.push(p.get(i).unwrap())
+                }
+
+                new_pat_stacks.push(new_stack)
+            }
+
+            // Create new q
+            let mut new_q: Vec<&'a SPatternPos> = vec![];
+
+            for i in 1..q.len() {
+                new_q.push(q.get(i).unwrap())
+            }
+
+            // Get type
+
+            let next_ty = match new_q.first() {
+                Some(pat) => Some(pat.ty),
+                None => None,
+            };
+
+            // Recurse
+            let wits = self.usefulness(next_ty, &new_pat_stacks, &new_q)?;
+
+            match wits {
+                Some(wits) => {
+                    let mut ret = vec![Witness::Wildcard];
+
+                    for w in wits {
+                        ret.push(w)
+                    }
+
+                    return Ok(Some(ret))
+                },
+                None => return Ok(None)
+            }
+        }
+
+        // (!!) Otherwise, we do the usual checking.
+
         // Determine all constructors of ty
 
         // For int, float, and string, we just push an "Arbitrary" constructor.
@@ -1518,7 +1578,7 @@ impl Analyzer {
                         // Specialization involves unpacking the arguments of the first
                         // column and pushing them to the front.
                         //
-                        // To undo this, we simply pop the first n items of the witness, 
+                        // To undo this, we simply pop the first n items of the witness,
                         // where n is the number of items in the current constructor,
                         // wrap those back into the constructor, then push that ctor
                         // back to the front of the witnesses list.
@@ -1531,13 +1591,13 @@ impl Analyzer {
                                 SType::Primitve(Prim::Int) => Witness::Int,
                                 SType::Primitve(Prim::Float) => Witness::Float,
                                 SType::Primitve(Prim::String) => Witness::String,
-                                _ => unreachable!()
+                                _ => unreachable!(),
                             },
                             Ctor::BoolCtor(b) => Witness::Bool(b),
 
                             // Determine the length of the parameters, which we call n, then
                             // consume the first n items of `witness`.
-                            // 
+                            //
                             // Wrap them in a ctor then push them back to the start of witness.
                             Ctor::AdtCtor(id, variant) => {
                                 let adt_def = self.get_adt_def(&id).unwrap();
@@ -1552,15 +1612,15 @@ impl Analyzer {
                                 }
 
                                 Witness::Adt(id, variant, param_wits)
-                            },
+                            }
                         };
 
                         witness.push(first);
 
                         witness.reverse();
 
-                        return Ok(Some(witness))
-                    },
+                        return Ok(Some(witness));
+                    }
                     None => continue,
                 }
             }
@@ -1598,7 +1658,7 @@ impl Analyzer {
 
         match res {
             Some(mut w) => Ok(Some(w.pop().unwrap())),
-            None => Ok(None)
+            None => Ok(None),
         }
     }
 
@@ -1985,18 +2045,16 @@ impl Analyzer {
                 let witness = self.get_witness(&ty, &pats);
 
                 match witness {
-                    Ok(res) => {
-                        match res {
-                            Some(wit) => {
-                                self.name_errors.push(AnalysisError::MatchNotExhaustiveErr(
-                                    self.witness_to_string(&wit),
-                                    pos
-                                ));
-                                success = false
-                            },
-                            None => (),
+                    Ok(res) => match res {
+                        Some(wit) => {
+                            self.name_errors.push(AnalysisError::MatchNotExhaustiveErr(
+                                self.witness_to_string(&wit),
+                                scrut_pos,
+                            ));
+                            success = false
                         }
-                    }
+                        None => (),
+                    },
                     Err(pos) => {
                         self.type_errors.push(TypeError::TypeNeededError(pos));
                         success = false;

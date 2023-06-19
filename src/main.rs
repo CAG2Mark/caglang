@@ -254,7 +254,7 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         }
         analyzer::AnalysisError::VariableRedefError(name, offending, original) => {
             let hint_msg = format!("local `\x1b[1m{}\x1b[0m` originally defined here", name);
-            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "info", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("redefinition of local variable `\x1b[1m{}\x1b[0m`", name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
@@ -275,21 +275,21 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         }
         analyzer::AnalysisError::NameAlreadyUsedError(name, offending, original) => {
             let hint_msg = format!("name `\x1b[1m{}\x1b[0m` originally used here", name);
-            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "info", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("name `\x1b[1m{}\x1b[0m` is already used", name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         }
         analyzer::AnalysisError::DuplicateMemberError(name, adt_name, offending, original) => {
             let hint_msg = format!("name `\x1b[1m{}\x1b[0m` already used here", name);
-            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "info", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("member `\x1b[1m{}\x1b[0m` already exists in {}", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::DuplicateVariantError(name, adt_name, offending, original) => {
             let hint_msg = format!("name `\x1b[1m{}\x1b[0m` already used here", name);
-            print_error_at(file_name, input, "note", &original, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "info", &original, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("duplicate variant name `\x1b[1m{}\x1b[0m` of ADT `\x1b[1m{}\x1b[0m`", name, adt_name);
             print_error_at(file_name, input, "error", &offending, &msg, ERR_COLOR, "^");
@@ -308,7 +308,7 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         },
         analyzer::AnalysisError::AdtNoBaseError(name, pos, hint_pos) => {
             let hint_msg = format!("insert a \x1b[1mBase\x1b[0m variant");
-            print_error_at(file_name, input, "note", &hint_pos, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "fix", &hint_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("ADT `\x1b[1m{}\x1b[0m` has no default variant", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
@@ -319,13 +319,13 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         },
         analyzer::AnalysisError::DuplicatePatIdError(name, pos, og_pos) => {
             let hint_msg = format!("name already used here");
-            print_error_at(file_name, input, "note", &og_pos, &hint_msg, HINT_COLOR, "-");
+            print_error_at(file_name, input, "info", &og_pos, &hint_msg, HINT_COLOR, "-");
 
             let msg = format!("identifier with name `\x1b[1m{}\x1b[0m` has already been bound", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
         analyzer::AnalysisError::MatchNotExhaustiveErr(cand, pos) => {
-            let msg = format!("match may not be exhaustive; it does not match `\x1b[1m{}\x1b[0m`", cand);
+            let msg = format!("match is not exhaustive; it does not match `\x1b[1m{}\x1b[0m`", cand);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
     }
