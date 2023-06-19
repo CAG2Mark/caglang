@@ -32,6 +32,18 @@ impl UnionFindInt {
         a
     }
 
+    pub fn find_set_imut(&self, mut a: u64) -> u64 {
+        if a >= self.cur {
+            panic!("Variable out of bounds!")
+        }
+
+        while a != self.arr[a as usize] {
+            a = self.arr[a as usize];
+        }
+
+        a
+    }
+
     pub fn union(&mut self, x: u64, y: u64) -> u64 {
         if x >= self.cur || y >= self.cur {
             panic!("Variable out of bounds!")

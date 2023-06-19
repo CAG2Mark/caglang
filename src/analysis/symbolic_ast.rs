@@ -35,7 +35,7 @@ pub struct SFunDef {
 pub struct SAdtVariant {
     pub name: Identifier,
     pub name_pos: PositionRange,
-    pub params: Vec<SParamDef>,
+    pub params: Vec<SParamDef>
 }
 
 pub struct SAdtDef {
@@ -45,11 +45,14 @@ pub struct SAdtDef {
     pub name_map: HashMap<String, Identifier>,
     pub variant_name_map: HashMap<String, Identifier>,
     pub variants: HashMap<Identifier, SAdtVariant>,
+    // for internal use
+    pub wildcard: SPatternPos
 }
 
 pub struct SPatternPos {
     pub pat: SPattern,
-    pub pos: PositionRange
+    pub pos: PositionRange,
+    pub ty: SType
 }
 
 pub enum SPattern {

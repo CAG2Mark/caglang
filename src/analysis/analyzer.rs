@@ -31,6 +31,21 @@ enum NSExprPos {
     S(SExprPos),
 }
 
+enum Ctor {
+    Arbitrary,
+    BoolCtor(bool),
+    AdtCtor(Identifier, Identifier),
+}
+
+enum Witness {
+    Int,
+    String,
+    Float,
+    Wildcard,
+    Bool(bool),
+    Adt(Identifier, Identifier, Vec<Witness>),
+}
+
 struct TmpFunDef {
     name_str: String,
     name: Identifier,
@@ -62,6 +77,51 @@ pub struct Analyzer {
     pub type_errors: Vec<TypeError>,
 }
 
+const INT_WILDCARD: SPatternPos = SPatternPos {
+    pat: SPattern::WildcardPattern,
+    pos: PositionRange {
+        start: Position { line_no: 0, pos: 0 },
+        end: Position { line_no: 0, pos: 0 },
+    },
+    ty: SType::Primitve(Prim::Int),
+};
+
+const FLOAT_WILDCARD: SPatternPos = SPatternPos {
+    pat: SPattern::WildcardPattern,
+    pos: PositionRange {
+        start: Position { line_no: 0, pos: 0 },
+        end: Position { line_no: 0, pos: 0 },
+    },
+    ty: SType::Primitve(Prim::Float),
+};
+
+const BOOL_WILDCARD: SPatternPos = SPatternPos {
+    pat: SPattern::WildcardPattern,
+    pos: PositionRange {
+        start: Position { line_no: 0, pos: 0 },
+        end: Position { line_no: 0, pos: 0 },
+    },
+    ty: SType::Primitve(Prim::Bool),
+};
+
+const STRING_WILDCARD: SPatternPos = SPatternPos {
+    pat: SPattern::WildcardPattern,
+    pos: PositionRange {
+        start: Position { line_no: 0, pos: 0 },
+        end: Position { line_no: 0, pos: 0 },
+    },
+    ty: SType::Primitve(Prim::String),
+};
+
+const TOP_WILDCARD: SPatternPos = SPatternPos {
+    pat: SPattern::WildcardPattern,
+    pos: PositionRange {
+        start: Position { line_no: 0, pos: 0 },
+        end: Position { line_no: 0, pos: 0 },
+    },
+    ty: SType::Top,
+};
+
 pub enum TypeError {
     TypeNeededError(PositionRange),
     InvalidOperandError(PositionRange),
@@ -85,6 +145,7 @@ pub enum AnalysisError {
     AdtNotFoundError(String, PositionRange),
     AdtVariantNotFoundError(String, String, PositionRange), // adt name, adt variant name, position
     AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
+    MatchNotExhaustiveErr(String, PositionRange), // candidate, position
 }
 
 fn is_type_var(ty: &TypeOrVar) -> bool {
@@ -130,6 +191,34 @@ impl Analyzer {
         }
     }
 
+    fn witness_to_string(&self, witness: &Witness) -> String {
+        match witness {
+            Witness::Int => "_".to_string(),
+            Witness::String => "_".to_string(),
+            Witness::Float => "_".to_string(),
+            Witness::Wildcard => "_".to_string(),
+            Witness::Bool(b) => b.to_string(),
+            Witness::Adt(id, variant, wits) => {
+                let adt_name = self.id_map.get(id).unwrap().to_owned();
+                let var_name = self.id_map.get(variant).unwrap();
+                
+                let mut wit_str = "".to_string();
+                let mut first = true;
+
+                for w in wits {
+                    if !first {
+                        wit_str += ", "
+                    }
+                    first = false;
+
+                    wit_str += &self.witness_to_string(w);
+                }
+
+                adt_name + "::" + var_name + "(" + &wit_str + ")"
+            },
+        }
+    }
+
     fn get_adt_def(&self, id: &Identifier) -> Option<&SAdtDef> {
         self.adt_defs.get(id)
     }
@@ -170,6 +259,19 @@ impl Analyzer {
             TypeOrVar::Ty(_) => ty,
             TypeOrVar::Var(v, _) => {
                 let rt = self.unions.find_set(v);
+                match self.type_map.get(&rt) {
+                    Some(t) => TypeOrVar::Ty(*t),
+                    None => ty,
+                }
+            }
+        }
+    }
+
+    fn resolve_type_imut(&self, ty: TypeOrVar) -> TypeOrVar {
+        match ty {
+            TypeOrVar::Ty(_) => ty,
+            TypeOrVar::Var(v, _) => {
+                let rt = self.unions.find_set_imut(v);
                 match self.type_map.get(&rt) {
                     Some(t) => TypeOrVar::Ty(*t),
                     None => ty,
@@ -635,6 +737,11 @@ impl Analyzer {
             name_map,
             variant_name_map,
             variants: s_variants,
+            wildcard: SPatternPos {
+                pat: SPattern::WildcardPattern,
+                ty: SType::UserType(id),
+                pos: defn.name_pos, // dummy, not used
+            },
         }
     }
 
@@ -1000,10 +1107,13 @@ impl Analyzer {
 
         let adt_ty: Vec<TypeOrVar> = adt_def.params.iter().map(|p| p.ty).collect();
         let ctor_ty: Vec<TypeOrVar> = ctor.params.iter().map(|p| p.ty).collect();
-        
+
+        let mut is_short = false;
+
         let types = if pats.len() == p1_len + p2_len {
             vec![adt_ty, ctor_ty].concat()
         } else if pats.len() == p2_len {
+            is_short = true;
             ctor_ty
         } else {
             self.name_errors.push(AnalysisError::WrongNoArgsError(
@@ -1016,6 +1126,26 @@ impl Analyzer {
         };
 
         let mut new_pats: Vec<SPatternPos> = vec![];
+
+        // Pad with wildcard patterns
+        if is_short {
+            for pd in &adt_def.params {
+                let ty = match pd.ty {
+                    TypeOrVar::Ty(t) => t,
+                    TypeOrVar::Var(_, pos) => {
+                        self.type_errors.push(TypeError::TypeNeededError(pos));
+                        return None;
+                    }
+                };
+
+                new_pats.push(SPatternPos {
+                    pat: SPattern::WildcardPattern,
+                    pos,
+                    ty,
+                })
+            }
+        }
+
         let mut more_locals = cur_locals.clone();
 
         // zip patterns and expected types, and type check
@@ -1036,8 +1166,9 @@ impl Analyzer {
             SPatternPos {
                 pat: SPattern::AdtPattern(adt_id, ctor_id, new_pats),
                 pos,
+                ty: SType::UserType(adt_id),
             },
-            more_locals
+            more_locals,
         ))
     }
 
@@ -1048,11 +1179,20 @@ impl Analyzer {
         expected: TypeOrVar,
         cur_locals: &LocalsMap,
     ) -> Option<(SPatternPos, LocalsMap)> {
+        let ty = match expected {
+            TypeOrVar::Ty(t) => t,
+            TypeOrVar::Var(_, pos) => {
+                self.type_errors.push(TypeError::TypeNeededError(pos));
+                return None;
+            }
+        };
+
         match pat.pat {
             Pattern::WildcardPattern => Some((
                 SPatternPos {
                     pat: SPattern::WildcardPattern,
                     pos: pat.pos,
+                    ty,
                 },
                 cur_locals.clone(),
             )),
@@ -1090,6 +1230,7 @@ impl Analyzer {
                             SPatternPos {
                                 pat: SPattern::IdPattern(local),
                                 pos: pat.pos,
+                                ty,
                             },
                             cur_locals.insert(name, (local, expected)), // has expected type
                         ))
@@ -1105,6 +1246,7 @@ impl Analyzer {
                     SPatternPos {
                         pat: SPattern::IntLiteralPattern(v),
                         pos: pat.pos,
+                        ty: SType::Primitve(Prim::Int),
                     },
                     cur_locals.clone(),
                 ))
@@ -1118,6 +1260,7 @@ impl Analyzer {
                     SPatternPos {
                         pat: SPattern::FloatLiteralPattern(v),
                         pos: pat.pos,
+                        ty: SType::Primitve(Prim::Float),
                     },
                     cur_locals.clone(),
                 ))
@@ -1131,6 +1274,7 @@ impl Analyzer {
                     SPatternPos {
                         pat: SPattern::StringLiteralPattern(v.clone()),
                         pos: pat.pos,
+                        ty: SType::Primitve(Prim::String),
                     },
                     cur_locals.clone(),
                 ))
@@ -1144,6 +1288,7 @@ impl Analyzer {
                     SPatternPos {
                         pat: SPattern::BoolLiteralPattern(v),
                         pos: pat.pos,
+                        ty: SType::Primitve(Prim::Bool),
                     },
                     cur_locals.clone(),
                 ))
@@ -1151,6 +1296,309 @@ impl Analyzer {
             Pattern::AdtPattern(qn, pats) => {
                 self.convert_adt_pat(qn, adts, pats, cur_locals, pat.pos)
             }
+        }
+    }
+
+    fn get_wildcard<'a>(&'a self, ty: &SType) -> &'a SPatternPos {
+        match ty {
+            SType::Top => &TOP_WILDCARD,
+            SType::Primitve(p) => match p {
+                Prim::Int => &INT_WILDCARD,
+                Prim::Float => &FLOAT_WILDCARD,
+                Prim::String => &STRING_WILDCARD,
+                Prim::Bool => &BOOL_WILDCARD,
+                Prim::Unit => unreachable!("Unit wildcard requested"),
+            },
+            SType::UserType(id) => &self.get_adt_def(id).unwrap().wildcard,
+        }
+    }
+
+    fn specialize<'a>(
+        &'a self,
+        ctor: &Ctor,
+        pat: &'a SPatternPos,
+    ) -> Result<Option<Vec<&'a SPatternPos>>, PositionRange> {
+        match (ctor, &pat.pat) {
+            // Arbitrary vs wildcard/id
+            (Ctor::Arbitrary, SPattern::WildcardPattern)
+            | (Ctor::Arbitrary, SPattern::IdPattern(_)) => Ok(Some(vec![])),
+
+            // Literal wildcard cases
+            (Ctor::BoolCtor(_), SPattern::WildcardPattern)
+            | (Ctor::BoolCtor(_), SPattern::IdPattern(_)) => Ok(Some(vec![])),
+
+            (Ctor::BoolCtor(v1), SPattern::BoolLiteralPattern(v2)) if v1 == v2 => Ok(Some(vec![])),
+
+            // Adt wildcard ctor cases. just return wildcards
+            (Ctor::AdtCtor(ctor, variant), SPattern::WildcardPattern)
+            | (Ctor::AdtCtor(ctor, variant), SPattern::IdPattern(_)) => {
+                let adt_def = self.adt_defs.get(ctor).unwrap();
+                let var_def = adt_def.variants.get(variant).unwrap();
+
+                let mut ret: Vec<&SPatternPos> = vec![];
+
+                for param in &adt_def.params {
+                    let ty = match param.ty {
+                        TypeOrVar::Ty(t) => t,
+                        TypeOrVar::Var(_, pos) => {
+                            return Err(pos);
+                        }
+                    };
+                    ret.push(self.get_wildcard(&ty))
+                }
+
+                for param in &var_def.params {
+                    let ty = match param.ty {
+                        TypeOrVar::Ty(t) => t,
+                        TypeOrVar::Var(_, pos) => {
+                            return Err(pos);
+                        }
+                    };
+                    ret.push(self.get_wildcard(&ty))
+                }
+
+                Ok(Some(ret))
+            }
+
+            (Ctor::AdtCtor(ctor, variant), SPattern::AdtPattern(ctor_got, variant_got, pats))
+                if *ctor == *ctor_got && *variant == *variant_got =>
+            {
+                let mut ret: Vec<&SPatternPos> = vec![];
+
+                for p in pats {
+                    ret.push(p)
+                }
+
+                Ok(Some(ret))
+            }
+
+            _ => Ok(None),
+        }
+    }
+
+    fn specialize_pats<'a>(
+        &'a self,
+        ctor: &Ctor,
+        pats: &Vec<&'a SPatternPos>,
+    ) -> Result<Option<Vec<Vec<&'a SPatternPos>>>, PositionRange> {
+        let first = match pats.first() {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        let mut ret: Vec<&SPatternPos>;
+
+        match self.specialize(&ctor, &first)? {
+            Some(v) => ret = v,
+            None => return Ok(None),
+        };
+
+        for i in 1..pats.len() {
+            ret.push(pats.get(i).unwrap());
+        }
+
+        Ok(Some(vec![ret]))
+    }
+
+    fn usefulness<'a>(
+        &'a self,
+        ty: Option<SType>,
+        pat_stacks: &'a Vec<Vec<&'a SPatternPos>>,
+        q: &'a Vec<&'a SPatternPos>,
+    ) -> Result<Option<Vec<Witness>>, PositionRange> {
+        // Base cases
+
+        fn to_witness_vec<'a>(q: &'a Vec<&'a SPatternPos>) -> Vec<Witness> {
+            let mut ret: Vec<Witness> = vec![];
+
+            for pat in q {
+                ret.push(to_witness(pat))
+            }
+
+            ret
+        }
+
+        fn to_witness(pat: &SPatternPos) -> Witness {
+            match &pat.pat {
+                SPattern::WildcardPattern => Witness::Wildcard,
+                SPattern::IdPattern(_) => Witness::Wildcard,
+                SPattern::IntLiteralPattern(_) => Witness::Int,
+                SPattern::FloatLiteralPattern(_) => Witness::Float,
+                SPattern::StringLiteralPattern(_) => Witness::String,
+                SPattern::BoolLiteralPattern(b) => Witness::Bool(*b),
+                SPattern::AdtPattern(id, ctor, pats) => {
+                    let mut pats_ref: Vec<&SPatternPos> = vec![];
+                    for p in pats {
+                        pats_ref.push(&p);
+                    }
+                    Witness::Adt(*id, *ctor, to_witness_vec(&pats_ref))
+                }
+            }
+        }
+
+        if pat_stacks.len() == 0 {
+            return Ok(Some(to_witness_vec(q)));
+        }
+
+        let cols = pat_stacks.first().unwrap().len();
+        if cols == 0 {
+            // return Ok(pat_stacks.to_vec());
+            return Ok(None);
+        }
+
+        // type must exist
+        let ty = ty.unwrap();
+
+        // Inductive case.
+
+        // Determine all constructors of ty
+
+        // For int, float, and string, we just push an "Arbitrary" constructor.
+        //
+        // This Arbitrary value is typeless; it just represents any arbitrary value
+        // of the required type, which is fine because we assume the pattern type checks
+        // (guaranteed by the previous stage).
+        //
+        // The idea is that nobody can pracitcally write ALL cases for all ints, floats and
+        // strings, so we just push an arbitrary value to represent some case not matched.
+        let ctors: Vec<Ctor> = match ty {
+            SType::Top => vec![],
+            SType::Primitve(t) => match t {
+                Prim::Int | Prim::Float | Prim::String => vec![Ctor::Arbitrary],
+                Prim::Bool => vec![Ctor::BoolCtor(true), Ctor::BoolCtor(false)],
+                Prim::Unit => unreachable!(),
+            },
+            SType::UserType(id) => {
+                // get adt def
+                let adt_def = self.adt_defs.get(&id).unwrap();
+
+                adt_def
+                    .variants
+                    .iter()
+                    .map(|(_, variant)| Ctor::AdtCtor(id, variant.name))
+                    .collect()
+            }
+        };
+
+        //  For each ctor c,
+        //      Compute specialize(c, q_1), ..., specialize(c, q_n)
+        //      For each ctor q' in specialize(c, q),
+        //           Compute usefuless(specialize(c, q_1), ..., specialize(c, q_n), q')
+
+        for c in ctors {
+            // Specialize q
+            let q_specialized = match self.specialize_pats(&c, q)? {
+                Some(q_) => q_,
+                None => continue,
+            };
+
+            let mut pats_specialized: Vec<Vec<&'a SPatternPos>> = vec![];
+
+            for pat_stack in pat_stacks {
+                match self.specialize_pats(&c, pat_stack)? {
+                    Some(v) => {
+                        for v_ in v {
+                            pats_specialized.push(v_)
+                        }
+                    }
+                    None => (),
+                }
+            }
+
+            for q_ in q_specialized {
+                let next_ty = match q_.first() {
+                    Some(pat) => Some(pat.ty),
+                    None => None,
+                };
+
+                match self.usefulness(next_ty, &pats_specialized, &q_)? {
+                    Some(mut witness) => {
+                        // Witness found, undo specialization and insert witness
+
+                        // Specialization involves unpacking the arguments of the first
+                        // column and pushing them to the front.
+                        //
+                        // To undo this, we simply pop the first n items of the witness, 
+                        // where n is the number of items in the current constructor,
+                        // wrap those back into the constructor, then push that ctor
+                        // back to the front of the witnesses list.
+
+                        witness.reverse();
+
+                        let first: Witness = match c {
+                            // These do not consume any values
+                            Ctor::Arbitrary => match ty {
+                                SType::Primitve(Prim::Int) => Witness::Int,
+                                SType::Primitve(Prim::Float) => Witness::Float,
+                                SType::Primitve(Prim::String) => Witness::String,
+                                _ => unreachable!()
+                            },
+                            Ctor::BoolCtor(b) => Witness::Bool(b),
+
+                            // Determine the length of the parameters, which we call n, then
+                            // consume the first n items of `witness`.
+                            // 
+                            // Wrap them in a ctor then push them back to the start of witness.
+                            Ctor::AdtCtor(id, variant) => {
+                                let adt_def = self.get_adt_def(&id).unwrap();
+                                let var_def = adt_def.variants.get(&variant).unwrap();
+
+                                let n = adt_def.params.len() + var_def.params.len();
+
+                                let mut param_wits: Vec<Witness> = vec![];
+
+                                for _ in 0..n {
+                                    param_wits.push(witness.pop().unwrap());
+                                }
+
+                                Witness::Adt(id, variant, param_wits)
+                            },
+                        };
+
+                        witness.push(first);
+
+                        witness.reverse();
+
+                        return Ok(Some(witness))
+                    },
+                    None => continue,
+                }
+            }
+        }
+
+        // Ok(witnesses)
+        // Ok(res)
+
+        Ok(None)
+    }
+
+    // Algorithm adapted from:
+    // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_mir_build/thir/pattern/usefulness/index.html
+    // Original paper:
+    // http://moscova.inria.fr/~maranget/papers/warn/index.html
+    fn get_witness(
+        &self,
+        ty: &TypeOrVar,
+        pats: &Vec<&SPatternPos>,
+    ) -> Result<Option<Witness>, PositionRange> {
+        let ty = match ty {
+            TypeOrVar::Ty(t) => t,
+            TypeOrVar::Var(_, pos) => {
+                return Err(*pos);
+            }
+        };
+
+        let mut pat_stacks: Vec<Vec<&SPatternPos>> = vec![];
+
+        for p in pats {
+            pat_stacks.push(vec![p]);
+        }
+
+        let res = self.usefulness(Some(*ty), &pat_stacks, &vec![&self.get_wildcard(ty)])?;
+
+        match res {
+            Some(mut w) => Ok(Some(w.pop().unwrap())),
+            None => Ok(None)
         }
     }
 
@@ -1395,9 +1843,17 @@ impl Analyzer {
                 // 3. check type
                 let ctor_type = TypeOrVar::Ty(SType::UserType(adt_id));
 
-                let expr = SExpr::Ctor(adt_id, ctor_id, transformed_args?);
-
-                self.add_constraint(expr, expected, ctor_type, e.pos)?
+                match transformed_args {
+                    Some(args) => {
+                        let expr = SExpr::Ctor(adt_id, ctor_id, args);
+                        self.add_constraint(expr, expected, ctor_type, e.pos)?
+                    }
+                    None => {
+                        // add type constraint to help further type checking
+                        self.add_type_constraint(expected, ctor_type, e.pos);
+                        return None;
+                    }
+                }
             }
             Expr::Sequence(e1, e2) => {
                 let e1 = self.convert(
@@ -1443,7 +1899,17 @@ impl Analyzer {
                         fns,
                         adts,
                     )?)),
-                    None => None,
+                    None => Some(Box::new(self.convert(
+                        ExprPos {
+                            expr: Expr::UnitLit,
+                            pos,
+                        }, // implicit unit literal for else branch
+                        expected,
+                        prev_locals,
+                        locals,
+                        fns,
+                        adts,
+                    )?)),
                 };
 
                 // Only check the option values now to maximise the number of errors outputted at once
@@ -1479,15 +1945,15 @@ impl Analyzer {
                     self.type_errors.push(TypeError::TypeNeededError(scrut_pos));
                 }
 
-                let mut fail = false;
+                let mut success = true;
                 let mut s_cases: Vec<SMatchCase> = vec![];
 
                 // for each matchcase, convert the pattern
                 for case in cases {
                     // convert
-                    let maybe = self.check_and_bind(adts, case.pat, expected, locals);
+                    let maybe = self.check_and_bind(adts, case.pat, ty, locals);
                     if maybe.is_none() {
-                        fail = true;
+                        success = false;
                         continue;
                     }
                     // evaluate body using new locals
@@ -1496,7 +1962,7 @@ impl Analyzer {
                         self.convert(case.body, expected, prev_locals, &more_locals, fns, adts);
 
                     if s_body.is_none() {
-                        fail = true;
+                        success = false;
                         continue;
                     }
 
@@ -1506,7 +1972,38 @@ impl Analyzer {
                     });
                 }
 
-                if !fail {
+                if !success {
+                    return None;
+                }
+
+                let mut pats: Vec<&SPatternPos> = vec![];
+
+                for case in &s_cases {
+                    pats.push(&case.pat);
+                }
+
+                let witness = self.get_witness(&ty, &pats);
+
+                match witness {
+                    Ok(res) => {
+                        match res {
+                            Some(wit) => {
+                                self.name_errors.push(AnalysisError::MatchNotExhaustiveErr(
+                                    self.witness_to_string(&wit),
+                                    pos
+                                ));
+                                success = false
+                            },
+                            None => (),
+                        }
+                    }
+                    Err(pos) => {
+                        self.type_errors.push(TypeError::TypeNeededError(pos));
+                        success = false;
+                    }
+                }
+
+                if success {
                     SExprPos {
                         expr: SExpr::Match(Box::new(s_scrut?), s_cases),
                         pos,

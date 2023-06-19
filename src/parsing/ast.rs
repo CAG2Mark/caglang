@@ -38,6 +38,7 @@ impl QualifiedName {
 
 impl fmt::Display for QualifiedName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        
         write!(
             f,
             "{}",
@@ -46,9 +47,10 @@ impl fmt::Display for QualifiedName {
                 .fold(
                     self.scopes
                         .iter()
-                        .rfold(self.name.to_string(), |a, b| a + "::" + &b.0),
+                        .rfold(self.name.to_string(), |a, b| b.0.to_string() + "::" + &a),
                      |a, b| a + "." + &b.0)
         )
+        
     }
 }
 

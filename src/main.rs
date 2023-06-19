@@ -324,6 +324,10 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             let msg = format!("identifier with name `\x1b[1m{}\x1b[0m` has already been bound", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
+        analyzer::AnalysisError::MatchNotExhaustiveErr(cand, pos) => {
+            let msg = format!("match may not be exhaustive; it does not match `\x1b[1m{}\x1b[0m`", cand);
+            print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
+        },
     }
 }
 
