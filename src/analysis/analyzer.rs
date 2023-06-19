@@ -1452,7 +1452,7 @@ impl Analyzer {
 
         // Inductive case.
 
-        // (!!) Important trick to make the running time proportional to the number of match arms,
+        // (!!) Important trick to make the running time proportional to the number of items in the "pattern tree",
         //      and NOT exponential in the depth/branching factor of the adts.
         //
         // If there is one identifier or wildcard pattern in the first column, we can just pop that from the pat stacks
