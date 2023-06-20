@@ -48,12 +48,12 @@ adt Something = {
     Second
 }
 
-let x = new Entity(1, 2)(1, 2f)
+let x = new Cell::Entity(1, 2, 1, 2f)
 
 match x {
-    Empty => print("Empty")
-    Block(id) => print(id)
-    Entity(id, hp) => {
+    Cell::Empty => print("Empty")
+    Cell::Block(id) => print(id)
+    Cell::Entity(id, hp) => {
       print(id)
       print(hp)
     }
