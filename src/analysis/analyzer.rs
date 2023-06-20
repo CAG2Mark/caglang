@@ -63,11 +63,11 @@ pub struct Analyzer {
     // Name analysis part.
     fun_defs: HashMap<Identifier, TmpFunDef>,
     adt_defs: HashMap<Identifier, SAdtDef>,
+    local_id: u64,
 
     // Useful to have
     id_map: HashMap<Identifier, String>,
     id_pos_map: HashMap<Identifier, PositionRange>,
-    local_id: u64,
 
     // Type analysis part. We use a union-find data structure
     // to compactly store type var equality.
