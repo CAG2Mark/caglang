@@ -1074,7 +1074,9 @@ impl Analyzer {
         if matches_float(&left_r) || matches_float(&right_r) {
             let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
             let e1 = self.add_constraint_pos(s_e1.0, float_prim, left_r).unwrap();
-            let e2 = self.add_constraint_pos(s_e2.0, float_prim, right_r).unwrap();
+            let e2 = self
+                .add_constraint_pos(s_e2.0, float_prim, right_r)
+                .unwrap();
 
             Ok((e1, e2, true, false))
         } else {
@@ -1698,14 +1700,20 @@ impl Analyzer {
                 TypeOrVar::Ty(SType::Top)
             };
 
-            let converted = self.convert_stat_expr(e, ty, &prev_locals, &locals, fns, adts)?;
+            let converted = self.convert_stat_expr(e, ty, &prev_locals, &locals, fns, adts);
 
-            match converted.1 {
-                Some((p, l)) => (prev_locals, locals) = (p, l),
-                None => { }
+            match converted {
+                Some(c) => {
+                    match c.1 {
+                        Some((p, l)) => {
+                            (prev_locals, locals) = (p, l);
+                        }
+                        None => {}
+                    };
+                    ret.push(c.0)
+                }
+                None => {}
             }
-
-            ret.push(converted.0);
 
             i += 1;
         }
@@ -1788,12 +1796,13 @@ impl Analyzer {
                     _ => (),
                 }
 
-                SStatExprPos { expr: SStatExpr::Nested(ret?), pos }
+                SStatExprPos {
+                    expr: SStatExpr::Nested(ret?),
+                    pos,
+                }
             }
 
-            StatExpr::FunDefn(_) => {
-                SStatExprPos { expr: Dummy, pos }
-            }
+            StatExpr::FunDefn(_) => SStatExprPos { expr: Dummy, pos },
             StatExpr::Variable(nme) => {
                 // not yet implemented
                 if !nme.scopes.is_empty() {
@@ -1967,8 +1976,7 @@ impl Analyzer {
                 let if_e_conv =
                     self.convert_stat_expr(*if_e, expected, prev_locals, locals, fns, adts);
 
-                let mut elif_e_conv_: Vec<(Converted, Converted)> =
-                    Vec::new();
+                let mut elif_e_conv_: Vec<(Converted, Converted)> = Vec::new();
 
                 for e in elif_e {
                     elif_e_conv_.push((
@@ -1978,25 +1986,24 @@ impl Analyzer {
                 }
 
                 let else_e_conv = match else_e {
-                    Some(e) => Some(Box::new(self.convert_stat_expr(
-                        *e,
-                        expected,
-                        prev_locals,
-                        locals,
-                        fns,
-                        adts,
-                    )?.0)),
-                    None => Some(Box::new(self.convert_stat_expr(
-                        StatExprPos {
-                            expr: StatExpr::UnitLit,
-                            pos,
-                        }, // implicit unit literal for else branch
-                        expected,
-                        prev_locals,
-                        locals,
-                        fns,
-                        adts,
-                    )?.0)),
+                    Some(e) => Some(Box::new(
+                        self.convert_stat_expr(*e, expected, prev_locals, locals, fns, adts)?
+                            .0,
+                    )),
+                    None => Some(Box::new(
+                        self.convert_stat_expr(
+                            StatExprPos {
+                                expr: StatExpr::UnitLit,
+                                pos,
+                            }, // implicit unit literal for else branch
+                            expected,
+                            prev_locals,
+                            locals,
+                            fns,
+                            adts,
+                        )?
+                        .0,
+                    )),
                 };
 
                 // Only check the option values now to maximise the number of errors outputted at once
@@ -2359,9 +2366,7 @@ impl Analyzer {
                 // LHS and RHS must be the same type, but RHS can implicitly convert.
                 let rhs = self.convert_stat_expr(*rhs, l_ty_r, prev_locals, locals, fns, adts);
 
-
-                let expr =
-                    SStatExpr::AssignmentOp(op, Box::new(lhs?.0), Box::new(rhs?.0));
+                let expr = SStatExpr::AssignmentOp(op, Box::new(lhs?.0), Box::new(rhs?.0));
 
                 self.add_constraint(expr, expected, ty, pos)?
             }
