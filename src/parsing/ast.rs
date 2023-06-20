@@ -287,9 +287,10 @@ pub fn format_stat_expr(e: &StatExpr, indent: u32, indent_first: bool) -> String
 
     let ret = match e {
         StatExpr::Nested(expr) => format!(
-            "{}{{\n{}\n}}",
+            "{}{{\n{}\n{}}}",
             first_line_indents,
-            format_expr(expr, indent + 1, true)
+            format_expr(expr, indent + 1, true),
+            indents
         ),
         StatExpr::FunDefn(df) => {
             let type_str = match &df.ty {
