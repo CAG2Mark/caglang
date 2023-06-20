@@ -1680,8 +1680,19 @@ impl Analyzer {
         let mut prev_locals = prev_locals.clone();
         let mut locals = locals.clone();
 
+        let last_idx = expr.len() - 1;
+
+        let mut i = 0;
+
         for e in expr {
-            let converted = self.convert_stat_expr(e, expected, &prev_locals, &locals, fns, adts)?;
+            let ty = if i == last_idx {
+                // we only require the final item has the expected type
+                expected
+            } else {
+                TypeOrVar::Ty(SType::Top)
+            };
+
+            let converted = self.convert_stat_expr(e, ty, &prev_locals, &locals, fns, adts)?;
 
             match converted.1 {
                 Some((p, l)) => (prev_locals, locals) = (p, l),
@@ -1689,6 +1700,8 @@ impl Analyzer {
             }
 
             ret.push(converted.0);
+
+            i += 1;
         }
 
         Some(ret)
@@ -2280,6 +2293,8 @@ impl Analyzer {
 
                 more = Some((more_prev_locals, more_locals));
 
+                self.add_type_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Unit)), pos);
+
                 SStatExprPos {
                     expr: SStatExpr::Let(
                         SParamDef {
@@ -2361,6 +2376,8 @@ impl Analyzer {
                 };
 
                 self.fun_defs.insert(id, new);
+
+                self.add_type_constraint(expected, TypeOrVar::Ty(SType::Primitve(Prim::Unit)), pos);
 
                 SStatExprPos { expr: Dummy, pos }
             }
