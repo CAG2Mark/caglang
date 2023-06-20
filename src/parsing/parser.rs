@@ -380,33 +380,11 @@ impl Parser {
         // position of this expression
         match &cur.tk {
             Keyword(kw) if kw == "def" => {
-                let e1 = self.parse_fn_def_expr()?;
-                let rest = self.parse_after_exprsep()?;
-                match rest {
-                    Some(e2) => {
-                        let p2 = e2.pos;
-                        Ok(ExprPos {
-                            expr: Sequence(Box::new(e1), Box::new(e2)),
-                            pos: union_posr(pos, p2),
-                        })
-                    }
-                    None => Ok(e1),
-                }
+                self.parse_fn_def_expr()
             }
 
             Keyword(kw) if kw == "adt" => {
-                let e1 = self.parse_adt_def_expr()?;
-                let rest = self.parse_after_exprsep()?;
-                match rest {
-                    Some(e2) => {
-                        let p2 = e2.pos;
-                        Ok(ExprPos {
-                            expr: Sequence(Box::new(e1), Box::new(e2)),
-                            pos: union_posr(pos, p2),
-                        })
-                    }
-                    None => Ok(e1),
-                }
+                self.parse_adt_def_expr()
             }
 
             Keyword(kw) if kw == "let" => self.parse_let(false),

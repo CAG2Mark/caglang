@@ -1,5 +1,3 @@
-use std::ops::Sub;
-
 use regex::Regex;
 use Vec;
 
@@ -408,7 +406,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&whitespace_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                let p2 = string_index_to_pos(&spl, pos - 1);
+                // let p2 = string_index_to_pos(&spl, pos - 1);
 
                 // ignore whitespace.
                 // ret.push(TokenPos { tk: Token::Whitespace, pos: file_pos });
@@ -422,7 +420,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         match try_parse(&comment_re, input, pos) {
             Some(val) => {
                 pos += val.len();
-                let p2 = string_index_to_pos(&spl, pos - 1);
+                // let p2 = string_index_to_pos(&spl, pos - 1);
 
                 // ret.push(TokenPos { tk: Token::Comment, pos: file_pos });
                 progress = true;

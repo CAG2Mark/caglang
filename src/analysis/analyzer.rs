@@ -1570,7 +1570,7 @@ impl Analyzer {
                     None => None,
                 };
 
-                let mut witnesses = self.usefulness(next_ty, &pats_specialized, &q_)?;
+                let witnesses = self.usefulness(next_ty, &pats_specialized, &q_)?;
 
                 for mut witness in witnesses {
                     // Witness found, undo specialization and insert witness
@@ -2334,7 +2334,7 @@ impl Analyzer {
                 self.add_constraint(expr, expected, ty, pos)?
             }
             Expr::AdtDefn(_, _) => unreachable!(),
-            Expr::FunDefId(id, pos, after) => {
+            Expr::FunDefId(id, _, after) => {
                 // capture locals
 
                 let retrieved = self.fun_defs.remove(&id).unwrap();

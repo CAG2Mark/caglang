@@ -447,6 +447,7 @@ fn main() {
 
     println!("{}", ast::format_tree(&parsed.expr, 0, true));
 
+    
     let analyzed = match analyzer.convert_top(parsed) {
         Some(_) => {
             // println!("Name Analysis OK")
