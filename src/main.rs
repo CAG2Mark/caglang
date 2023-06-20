@@ -214,6 +214,9 @@ fn format_codes(items: Vec<String>, sep: &str) -> String {
     ret
 }
 
+const ERR_COLOR: u32 = 31;
+const HINT_COLOR: u32 = 36;
+
 fn print_parse_error(file_name: &String, input: &String, error: parser::ParseError) {
     let chunks: Vec<&str> = input.lines().collect();
 
@@ -254,6 +257,7 @@ fn print_parse_error(file_name: &String, input: &String, error: parser::ParseErr
         }
     }
 }
+
 
 fn print_analysis_error(file_name: &String, input: &String, error: analyzer::AnalysisError) {
     match error {
@@ -346,9 +350,6 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
         },
     }
 }
-
-const ERR_COLOR: u32 = 31;
-const HINT_COLOR: u32 = 36;
 
 fn print_type_error(file_name: &String, input: &String, error: analyzer::TypeError) {
     match error {
@@ -445,7 +446,7 @@ fn main() {
 
     let mut analyzer = analyzer::init_analyzer();
 
-    println!("{}", ast::format_tree(&parsed.expr, 0, true));
+    println!("{}", ast::format_expr(&parsed, 0, true));
 
     
     let analyzed = match analyzer.convert_top(parsed) {

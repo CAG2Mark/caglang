@@ -5,18 +5,13 @@ use crate::tokens::*;
 
 use crate::parsing::position::*;
 
-fn try_parse(regex: &Regex, input: &String, pos: usize) -> Option<String> {
-    match regex.captures_at(input, pos) {
-        Some(captures) => match captures.get(0) {
-            Some(matched) => {
-                if matched.start() != pos {
-                    None
-                } else {
-                    Some(matched.as_str().to_string())
-                }
-            }
-            None => None,
-        },
+fn try_parse(regex: &Regex, input: &String) -> Option<String> {
+    let find = regex.find(input);
+
+    match find {
+        Some(matched) => {
+            Some(matched.as_str().to_string())
+        }
         None => None,
     }
 }
@@ -194,7 +189,7 @@ fn op_convert(cand: &str) -> Op {
         "<=" => Lte,
         ">" => Gt,
         ">=" => Gte,
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -209,7 +204,7 @@ fn assignment_op_convert(cand: &str) -> AssignOp {
         "||=" => OrEq,
         "&&=" => AndEq,
         "=" => Assign,
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }
 
@@ -220,24 +215,24 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
 
     let mut pos = 0;
 
-    // let keyword_re = Regex::new(r"def|if|elif|else|while|continue|break|match").unwrap();
+    // let keyword_re = Regex::new(r"^(?:def|if|elif|else|while|continue|break|match)").unwrap();
     // { } [ ] ( ) => = . , _ :
-    let delimiter_re = Regex::new(r"\{|\}|\[|\]|\(|\)|=>|\.|,|_|::|:").unwrap();
-    let ident_re = Regex::new(r"[a-zA-Z_][a-zA-Z0-9_]*").unwrap();
-    // let primitive_re = Regex::new(r"Int|Bool|String|Float|Unit").unwrap();
-    let int_literal_re = Regex::new(r"0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+").unwrap();
-    let float_literal_re = Regex::new(r"\d+(?:\.\d+f?|f)").unwrap();
-    let string_literal_re = Regex::new(r#""([^\\"]|\\\\|\\n|\\t|\\r|\\")*"|"""#).unwrap();
+    let delimiter_re = Regex::new(r"^(?:\{|\}|\[|\]|\(|\)|=>|\.|,|_|::|:)").unwrap();
+    let ident_re = Regex::new(r"^(?:[a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+    // let primitive_re = Regex::new(r"^(?:Int|Bool|String|Float|Unit").unwrap();
+    let int_literal_re = Regex::new(r"^(?:0x[0-9a-fA-F]+|0o[0-7]+|0b[0-1]+|\d+)").unwrap();
+    let float_literal_re = Regex::new(r"^(?:\d+(?:\.\d+f?|f))").unwrap();
+    let string_literal_re = Regex::new(r#"^"(?:([^(?:\\"]|\\\\|\\n|\\t|\\r|\\")*"|"")"#).unwrap();
     let operator_re =
-        Regex::new(r"\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<=|<|>=|>|=").unwrap();
+        Regex::new(r"^(?:\+=|-=|\*=|/=|%=|\|\|=|&&=|\+|-|\*|/|%|!|!=|\|\||&&|==|<=|<|>=|>|=)").unwrap();
     // can "escape" away new lines using \
-    let whitespace_re = Regex::new(r"( |\t)+|\\( |\t)*\n( |\t)*").unwrap();
+    let whitespace_re = Regex::new(r"^(?:( |\t)+|\\( |\t)*\n( |\t)*)").unwrap();
     // semicolon with new lines or whitespace around it
     let explicit_exprsep_re =
-        Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*;(?: |\t|\n)*|;(?: |\t|\n)*").unwrap();
+        Regex::new(r"^(?:(?: |\t|\n)*\n(?: |\t|\n)*;(?: |\t|\n)*|;(?: |\t|\n)*)").unwrap();
     // at least one new new line with whitespace around it
-    let implicit_exprsep_re = Regex::new(r"(?: |\t|\n)*\n(?: |\t|\n)*").unwrap();
-    let comment_re = Regex::new(r"#[^\n]*").unwrap();
+    let implicit_exprsep_re = Regex::new(r"^(?:(?: |\t|\n)*\n(?: |\t|\n)*)").unwrap();
+    let comment_re = Regex::new(r"^(?:#[^(?:\n]*)").unwrap();
 
     // order:
     //  float literal
@@ -257,10 +252,12 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         progress = false;
         let file_pos = string_index_to_pos(&spl, pos);
         let pos_temp = pos;
+        let cur = input[pos..].to_string();
+
         // Try parsing all possible regexes, in order (highest priority first, then longest match)
 
         // Floats
-        match try_parse(&float_literal_re, input, pos) {
+        match try_parse(&float_literal_re, &cur) {
             Some(val) => {
                 pos += val.len();
 
@@ -277,7 +274,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Ints
-        match try_parse(&int_literal_re, input, pos) {
+        match try_parse(&int_literal_re, &cur) {
             Some(val) => {
                 pos += val.len();
 
@@ -294,7 +291,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Strings
-        match try_parse(&string_literal_re, input, pos) {
+        match try_parse(&string_literal_re, &cur) {
             Some(val) => {
                 pos += val.len();
 
@@ -316,7 +313,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Delimiters
-        match try_parse(&delimiter_re, input, pos) {
+        match try_parse(&delimiter_re, &cur) {
             Some(val) => {
                 pos += val.len();
                 let p2 = string_index_to_pos(&spl, pos - 1);
@@ -332,7 +329,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Operators
-        match try_parse(&operator_re, input, pos) {
+        match try_parse(&operator_re, &cur) {
             Some(val) => {
                 pos += val.len();
                 let p2 = string_index_to_pos(&spl, pos - 1);
@@ -353,7 +350,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
             None => {}
         }
         // Identifiers, Keywords, Prim Types, Bool Literal
-        match try_parse(&ident_re, input, pos) {
+        match try_parse(&ident_re, &cur) {
             Some(val) => {
                 pos += val.len();
                 let p2 = string_index_to_pos(&spl, pos - 1);
@@ -369,7 +366,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Explicit exprsep
-        match try_parse(&explicit_exprsep_re, input, pos) {
+        match try_parse(&explicit_exprsep_re, &cur) {
             Some(val) => {
                 pos += val.len();
 
@@ -388,7 +385,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Implicit exprsep
-        match try_parse(&implicit_exprsep_re, input, pos) {
+        match try_parse(&implicit_exprsep_re, &cur) {
             Some(val) => {
                 pos += val.len();
 
@@ -403,7 +400,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Whitespace
-        match try_parse(&whitespace_re, input, pos) {
+        match try_parse(&whitespace_re, &cur) {
             Some(val) => {
                 pos += val.len();
                 // let p2 = string_index_to_pos(&spl, pos - 1);
@@ -417,7 +414,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         }
 
         // Comment
-        match try_parse(&comment_re, input, pos) {
+        match try_parse(&comment_re, &cur) {
             Some(val) => {
                 pos += val.len();
                 // let p2 = string_index_to_pos(&spl, pos - 1);

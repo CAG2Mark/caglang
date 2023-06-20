@@ -38,19 +38,16 @@ impl QualifiedName {
 
 impl fmt::Display for QualifiedName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        
         write!(
             f,
             "{}",
-            self.members
-                .iter()
-                .fold(
-                    self.scopes
-                        .iter()
-                        .rfold(self.name.to_string(), |a, b| b.0.to_string() + "::" + &a),
-                     |a, b| a + "." + &b.0)
+            self.members.iter().fold(
+                self.scopes
+                    .iter()
+                    .rfold(self.name.to_string(), |a, b| b.0.to_string() + "::" + &a),
+                |a, b| a + "." + &b.0
+            )
         )
-        
     }
 }
 
@@ -78,7 +75,7 @@ pub struct FunDef {
     pub name_pos: PositionRange,
     pub ty: Option<TypePos>,
     pub params: Vec<ParamDef>,
-    pub body: Box<ExprPos>,
+    pub body: Box<StatExprPos>,
 }
 
 pub struct AdtVariant {
@@ -96,7 +93,7 @@ pub struct AdtDef {
 
 pub struct PatternPos {
     pub pat: Pattern,
-    pub pos: PositionRange
+    pub pos: PositionRange,
 }
 
 pub enum Pattern {
@@ -111,41 +108,42 @@ pub enum Pattern {
 
 pub struct MatchCase {
     pub pat: PatternPos,
-    pub body: ExprPos,
+    pub body: StatExprPos,
 }
 
-pub enum Expr {
-    Nested(Box<ExprPos>),
-    FunDefn(FunDef, Box<ExprPos>), // id, ret type, params, body, after
+pub type Expr = Vec<StatExprPos>;
+
+pub enum StatExpr {
+    Nested(Expr),
+    FunDefn(FunDef),
     Variable(QualifiedName),
-    Call(QualifiedName, Vec<ExprPos>),
-    Ctor(QualifiedName, Vec<ExprPos>),
-    Sequence(Box<ExprPos>, Box<ExprPos>),
+    Call(QualifiedName, Vec<StatExprPos>),
+    Ctor(QualifiedName, Vec<StatExprPos>),
     Ite(
-        Box<ExprPos>,
-        Box<ExprPos>,
-        Vec<(Box<ExprPos>, Box<ExprPos>)>,
-        Option<Box<ExprPos>>,
+        Box<StatExprPos>,
+        Box<StatExprPos>,
+        Vec<(Box<StatExprPos>, Box<StatExprPos>)>,
+        Option<Box<StatExprPos>>,
     ), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
-    Match(Box<ExprPos>, Vec<MatchCase>), // scrutinee, matches
-    While(Box<ExprPos>, Box<ExprPos>),
+    Match(Box<StatExprPos>, Vec<MatchCase>), // scrutinee, matches
+    While(Box<StatExprPos>, Box<StatExprPos>),
     IntLit(i64),
     FloatLit(f64),
     StringLit(String),
     BoolLit(bool),
     UnitLit,
-    Infix(Op, Box<ExprPos>, Box<ExprPos>), // Op, left, right
-    Prefix(Op, Box<ExprPos>),              // Op, expr
-    Let(ParamDef, Box<ExprPos>, Box<ExprPos>), // let x (: Type)? = first <ExprSep> second
-    AssignmentOp(AssignOp, Box<ExprPos>, Box<ExprPos>, Box<ExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second
-    AdtDefn(AdtDef, Box<ExprPos>),                                  // // adtdef, after
+    Infix(Op, Box<StatExprPos>, Box<StatExprPos>), // Op, left, right
+    Prefix(Op, Box<StatExprPos>),                  // Op, expr
+    Let(ParamDef, Box<StatExprPos>),               // let x (: Type)? = first <ExprSep> second
+    AssignmentOp(AssignOp, Box<StatExprPos>, Box<StatExprPos>), // <assignment operator> lvalue rvalue <ExprSep>
+    AdtDefn(AdtDef),
 
     // internal use for name analyzer
-    FunDefId(u64, PositionRange, Box<ExprPos>),
+    FunDefId(u64, PositionRange),
 }
 
-pub struct ExprPos {
-    pub expr: Expr,
+pub struct StatExprPos {
+    pub expr: StatExpr,
     pub pos: PositionRange,
 }
 
@@ -203,7 +201,7 @@ pub fn format_matchcase(v: &MatchCase, indent: u32) -> String {
     }
 
     let pat_str = format_pattern(&v.pat);
-    let body_str = format_tree(&v.body.expr, indent, false);
+    let body_str = format_stat_expr(&v.body.expr, indent, false);
 
     format!("{indents}{pat_str} => {body_str}")
 }
@@ -235,31 +233,49 @@ pub fn format_adt_variants(v: &Vec<AdtVariant>, indent: u32) -> String {
     )
 }
 
-pub fn format_exprs(p: &Vec<ExprPos>, indent: u32) -> String {
+pub fn format_exprs(p: &Vec<StatExprPos>, indent: u32) -> String {
     format_sep(
         &p.iter()
-            .map(|p| format_tree(&p.expr, indent, false))
+            .map(|p| format_stat_expr(&p.expr, indent, false))
             .collect(),
         ", ",
     )
 }
 
-fn format_conds_expr(cond: &ExprPos, expr: &ExprPos, indent: u32, kw: &str) -> String {
+fn format_conds_expr(cond: &StatExprPos, expr: &StatExprPos, indent: u32, kw: &str) -> String {
     let mut indents = "".to_string();
     for _ in 0..indent {
         indents = indents + "    ";
     }
 
-    let cond = format_tree(&cond.expr, indent + 1, false);
+    let cond = format_stat_expr(&cond.expr, indent, false);
     let body = match &expr.expr {
-        Expr::Nested(inner) => format_tree(&inner.expr, indent + 1, true),
-        e => format_tree(&e, indent + 1, true),
+        StatExpr::Nested(inner) => format_expr(inner, indent, true),
+        e => format_stat_expr(&e, indent + 1, true),
     };
 
     format!("{kw} {cond} {{\n{body}\n{indents}}}").to_string()
 }
 
-pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
+pub fn format_expr(e: &Expr, indent: u32, indent_first: bool) -> String {
+    let mut ret = "".to_string();
+
+    let mut first = true;
+
+    for se in e {
+        if first {
+            ret += &format_stat_expr(&se.expr, indent, indent_first);
+            first = false;
+        } else {
+            ret += ";\n";
+            ret += &format_stat_expr(&se.expr, indent, true)
+        }
+    }
+
+    ret
+}
+
+pub fn format_stat_expr(e: &StatExpr, indent: u32, indent_first: bool) -> String {
     let mut indents = "".to_string();
     let mut first_line_indents = "".to_string();
     for _ in 0..indent {
@@ -270,38 +286,42 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
     }
 
     let ret = match e {
-        Expr::Nested(expr) => match expr.expr {
-            Expr::Nested(_) => format_tree(&expr.expr, indent, indent_first),
-            _ => format!(
-                "{}{{\n{}\n{}}}",
-                first_line_indents,
-                format_tree(&expr.expr, indent + 1, true),
-                indents
-            ),
-        },
-        Expr::FunDefn(df, after) => {
+        StatExpr::Nested(expr) => format!(
+            "{}{{\n{}\n}}",
+            first_line_indents,
+            format_expr(expr, indent + 1, true)
+        ),
+        StatExpr::FunDefn(df) => {
             let type_str = match &df.ty {
                 Some(t) => format!(": {}", t.ty),
                 None => "".to_string(),
             };
 
-            let body_inner = match &df.body.expr {
-                Expr::Nested(expr) => &expr.expr,
-                other => other,
-            };
-
-            format!(
-                "{}def {}{}{} = {{\n{}\n{}}};\n{}",
-                first_line_indents,
-                df.name,
-                format_param_dfs(&df.params),
-                type_str,
-                format_tree(&body_inner, indent + 1, true),
-                indents,
-                format_tree(&after.expr, indent, true)
-            )
+            match &df.body.expr {
+                StatExpr::Nested(_) => {
+                    format!(
+                        "{}def {}{}{} = {}",
+                        first_line_indents,
+                        df.name,
+                        format_param_dfs(&df.params),
+                        type_str,
+                        format_stat_expr(&df.body.expr, indent, false),
+                    )
+                }
+                other => {
+                    format!(
+                        "{}def {}{}{} = {{\n{}\n{}}}",
+                        first_line_indents,
+                        df.name,
+                        format_param_dfs(&df.params),
+                        type_str,
+                        format_stat_expr(&other, indent + 1, true),
+                        indents
+                    )
+                }
+            }
         }
-        Expr::Ite(cond1, expr1, more, elze) => {
+        StatExpr::Ite(cond1, expr1, more, elze) => {
             let first = first_line_indents + &format_conds_expr(&*cond1, &*expr1, indent, "if");
             let elifs = more
                 .iter()
@@ -314,8 +334,8 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
             let last = match elze {
                 Some(e) => {
                     let body = match &e.expr {
-                        Expr::Nested(inner) => format_tree(&inner.expr, indent + 1, true),
-                        e => format_tree(&e, indent + 1, true),
+                        StatExpr::Nested(inner) => format_expr(inner, indent, true),
+                        e => format_stat_expr(&e, indent + 1, true),
                     };
                     format!(" else {{\n{}\n{}}}", body, indents)
                 }
@@ -323,31 +343,25 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
             };
             elifs + &last
         }
-        Expr::While(cond, expr) => {
+        StatExpr::While(cond, expr) => {
             first_line_indents + &format_conds_expr(&*cond, &*expr, indent, "while")
         }
-        Expr::Let(id, e1, e2) => {
-            let first = format_tree(&e1.expr, indent, false);
-            let second = format_tree(&e2.expr, indent, true);
+        StatExpr::Let(id, e1) => {
+            let first = format_stat_expr(&e1.expr, indent, false);
             format!(
-                "{}let {} = {};\n{}",
+                "{}let {} = {}",
                 first_line_indents,
                 format_param_df(id),
-                first,
-                second
+                first
             )
         }
-        Expr::AssignmentOp(op, lval, e1, e2) => {
-            let lval_ = format_tree(&lval.expr, indent, false);
-            let first = format_tree(&e1.expr, indent, false);
-            let second = format_tree(&e2.expr, indent, true);
-            format!(
-                "{}{} {} {};\n{}",
-                first_line_indents, lval_, op, first, second
-            )
+        StatExpr::AssignmentOp(op, lval, e1) => {
+            let lval_ = format_stat_expr(&lval.expr, indent, false);
+            let first = format_stat_expr(&e1.expr, indent, false);
+            format!("{}{} {} {}", first_line_indents, lval_, op, first)
         }
-        Expr::Variable(x) => format!("{}{}", first_line_indents, x),
-        Expr::Call(qn, args) => {
+        StatExpr::Variable(x) => format!("{}{}", first_line_indents, x),
+        StatExpr::Call(qn, args) => {
             format!(
                 "{}{}({})",
                 first_line_indents,
@@ -355,43 +369,37 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
                 format_exprs(args, indent + 1)
             )
         }
-        Expr::Sequence(e1, e2) => {
-            let first = format_tree(&e1.expr, indent, indent_first);
-            let second = format_tree(&e2.expr, indent, true);
-            format!("{};\n{}", first, second)
-        }
-        Expr::IntLit(v) => format!("{}{}", first_line_indents, v),
-        Expr::FloatLit(v) => format!("{}{}f", first_line_indents, v),
-        Expr::StringLit(v) => format!("{}\"{}\"", first_line_indents, v),
-        Expr::BoolLit(v) => format!("{}{}", first_line_indents, v),
-        Expr::UnitLit => format!("{}()", first_line_indents),
-        Expr::Infix(op, left, right) => format!(
+        StatExpr::IntLit(v) => format!("{}{}", first_line_indents, v),
+        StatExpr::FloatLit(v) => format!("{}{}f", first_line_indents, v),
+        StatExpr::StringLit(v) => format!("{}\"{}\"", first_line_indents, v),
+        StatExpr::BoolLit(v) => format!("{}{}", first_line_indents, v),
+        StatExpr::UnitLit => format!("{}()", first_line_indents),
+        StatExpr::Infix(op, left, right) => format!(
             "{}({} {} {})",
             first_line_indents,
-            format_tree(&left.expr, indent + 1, false),
+            format_stat_expr(&left.expr, indent + 1, false),
             op,
-            format_tree(&right.expr, indent + 1, false)
+            format_stat_expr(&right.expr, indent + 1, false)
         ),
-        Expr::Prefix(op, expr) => format!(
+        StatExpr::Prefix(op, expr) => format!(
             "{}({}{})",
             first_line_indents,
             op,
-            format_tree(&expr.expr, indent + 1, false)
+            format_stat_expr(&expr.expr, indent + 1, false)
         ),
-        Expr::AdtDefn(adt, after) => {
+        StatExpr::AdtDefn(adt) => {
             let nme = adt.name.to_string();
             let params_formatted = format_param_dfs(&adt.params);
             let variants = format_adt_variants(&adt.variants, indent);
-            let after = format_tree(&after.expr, indent, true);
 
-            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}};\n{after}")
+            format!("{first_line_indents}adt {nme}{params_formatted} = {{\n{variants}\n{indents}}}")
         }
-        Expr::Match(scrut, cases) => {
-            let scrut_str = format_tree(&scrut.expr, indent + 1, false);
+        StatExpr::Match(scrut, cases) => {
+            let scrut_str = format_stat_expr(&scrut.expr, indent + 1, false);
             let cases_str = format_matchcases(cases, indent + 1);
             format!("{first_line_indents}match {scrut_str} {{\n{cases_str}\n{indents}}}")
         }
-        Expr::Ctor(qn, args) => {
+        StatExpr::Ctor(qn, args) => {
             format!(
                 "{}new {}({})",
                 first_line_indents,
@@ -399,7 +407,7 @@ pub fn format_tree(e: &Expr, indent: u32, indent_first: bool) -> String {
                 format_exprs(args, indent + 1)
             )
         }
-        Expr::FunDefId(_, _, _) => unreachable!(),
+        StatExpr::FunDefId(_, _) => unreachable!(),
     };
 
     ret

@@ -29,7 +29,7 @@ pub struct SFunDef {
     pub name_pos: PositionRange,
     pub ty: TypeOrVar,
     pub params: Vec<SParamDef>,
-    pub body: Box<SExprPos>,
+    pub body: Box<SStatExprPos>,
 }
 
 pub struct SAdtVariant {
@@ -67,43 +67,44 @@ pub enum SPattern {
 
 pub struct SMatchCase {
     pub pat: SPatternPos,
-    pub body: SExprPos,
+    pub body: SStatExprPos,
 }
 
-pub enum SExpr {
+pub type SExpr = Vec<SStatExprPos>;
+
+pub enum SStatExpr {
     Dummy,
-    Nested(Box<SExprPos>),
+    Nested(SExpr),
     Variable(Identifier, Vec<Identifier>),
-    Call(Identifier, Vec<SExprPos>),
-    Ctor(Identifier, Identifier, Vec<SExprPos>), // adt id, variant id
-    Sequence(Box<SExprPos>, Box<SExprPos>),
+    Call(Identifier, Vec<SStatExprPos>),
+    Ctor(Identifier, Identifier, Vec<SStatExprPos>), // adt id, variant id
     Ite(
-        Box<SExprPos>,
-        Box<SExprPos>,
-        Vec<(Box<SExprPos>, Box<SExprPos>)>,
-        Option<Box<SExprPos>>,
+        Box<SStatExprPos>,
+        Box<SStatExprPos>,
+        Vec<(Box<SStatExprPos>, Box<SStatExprPos>)>,
+        Option<Box<SStatExprPos>>,
     ), // if Cond1 Expr1, elif Cond2 Expr2, ..., elif CondN, ExprN, ElseExpr
-    Match(Box<SExprPos>, Vec<SMatchCase>), // scrutinee, matches
-    While(Box<SExprPos>, Box<SExprPos>),
+    Match(Box<SStatExprPos>, Vec<SMatchCase>), // scrutinee, matches
+    While(Box<SStatExprPos>, Box<SStatExprPos>),
     IntLit(i64),
     FloatLit(f64),
     StringLit(String),
     BoolLit(bool),
     UnitLit,
-    Infix(Op, Box<SExprPos>, Box<SExprPos>), // Op, left, right
-    Prefix(Op, Box<SExprPos>),               // Op, expr
-    Let(SParamDef, Box<SExprPos>, Box<SExprPos>), // let x (: Type)? = first <ExprSep> second
-    AssignmentOp(AssignOp, Box<SExprPos>, Box<SExprPos>, Box<SExprPos>), // <assignment operator> lvalue rvalue <ExprSep> second,
+    Infix(Op, Box<SStatExprPos>, Box<SStatExprPos>), // Op, left, right
+    Prefix(Op, Box<SStatExprPos>),               // Op, expr
+    Let(SParamDef, Box<SStatExprPos>), // let x (: Type)? = first
+    AssignmentOp(AssignOp, Box<SStatExprPos>, Box<SStatExprPos>), // <assignment operator> lvalue rvalue
 
     // built in conversions
-    BoolToFloat(Box<SExprPos>),
-    IntToFloat(Box<SExprPos>),
-    BoolToInt(Box<SExprPos>),
-    FloatToBool(Box<SExprPos>),
-    IntToBool(Box<SExprPos>)
+    BoolToFloat(Box<SStatExprPos>),
+    IntToFloat(Box<SStatExprPos>),
+    BoolToInt(Box<SStatExprPos>),
+    FloatToBool(Box<SStatExprPos>),
+    IntToBool(Box<SStatExprPos>)
 }
 
-pub struct SExprPos {
-    pub expr: SExpr,
+pub struct SStatExprPos {
+    pub expr: SStatExpr,
     pub pos: PositionRange,
 }

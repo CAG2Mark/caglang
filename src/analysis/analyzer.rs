@@ -6,7 +6,7 @@ use std::iter::zip;
 use crate::parsing::ast::*;
 use crate::parsing::position::*;
 
-use crate::analysis::symbolic_ast::SExpr::*;
+use crate::analysis::symbolic_ast::SStatExpr::*;
 use crate::analysis::symbolic_ast::*;
 
 use crate::parsing::tokens::AssignOp;
@@ -26,10 +26,12 @@ type LocalsMap = TreeMap<String, Local>;
 type FnMap = TreeMap<String, LocalFn>;
 type AdtMap = TreeMap<String, LocalAdt>;
 
+type Converted = Option<(SStatExprPos, Option<(LocalsMap, LocalsMap)>)>;
+
 // for storing nominal exprs pending conversion
 enum NSExprPos {
-    N(ExprPos),
-    S(SExprPos),
+    N(StatExprPos),
+    S(SStatExprPos),
 }
 
 enum Ctor {
@@ -146,7 +148,7 @@ pub enum AnalysisError {
     AdtNotFoundError(String, PositionRange),
     AdtVariantNotFoundError(String, String, PositionRange), // adt name, adt variant name, position
     AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
-    MatchNotExhaustiveErr(Vec<String>, PositionRange),         // candidate, position
+    MatchNotExhaustiveErr(Vec<String>, PositionRange),    // candidate, position
 }
 
 fn is_type_var(ty: &TypeOrVar) -> bool {
@@ -167,6 +169,16 @@ fn matches_number(ty: &TypeOrVar) -> bool {
 
 fn matches_numerical(ty: &TypeOrVar) -> bool {
     matches_float(ty) || matches_int(ty) || matches_bool(ty)
+}
+
+pub fn get_local(name: &String, prev_locals: &LocalsMap, locals: &LocalsMap) -> Option<Local> {
+    match locals.get(name) {
+        Some(t) => Some(*t),
+        None => match prev_locals.get(name) {
+            Some(t) => Some(*t),
+            None => None,
+        },
+    }
 }
 
 impl Analyzer {
@@ -291,20 +303,20 @@ impl Analyzer {
 
     fn add_constraint_pos(
         &mut self,
-        expr: SExprPos,
+        expr: SStatExprPos,
         expected: TypeOrVar,
         actual: TypeOrVar,
-    ) -> Option<SExprPos> {
+    ) -> Option<SStatExprPos> {
         self.add_constraint(expr.expr, expected, actual, expr.pos)
     }
 
     // returns converted expression, type of new expression
     fn implicit_convert(
         &self,
-        expr: SExprPos,
+        expr: SStatExprPos,
         expected: TypeOrVar,
         actual: TypeOrVar,
-    ) -> (SExprPos, TypeOrVar) {
+    ) -> (SStatExprPos, TypeOrVar) {
         use crate::parsing::tokens::Prim::*;
 
         let pos = expr.pos;
@@ -320,7 +332,7 @@ impl Analyzer {
                     _ => return (expr, actual),
                 };
                 (
-                    SExprPos {
+                    SStatExprPos {
                         expr: new_expr,
                         pos,
                     },
@@ -334,16 +346,16 @@ impl Analyzer {
     // Also handles implicit conversions.
     fn add_constraint(
         &mut self,
-        expr: SExpr,
+        expr: SStatExpr,
         expected: TypeOrVar,
         actual: TypeOrVar,
         pos: PositionRange,
-    ) -> Option<SExprPos> {
+    ) -> Option<SStatExprPos> {
         // resolve types
         let r_expected = self.resolve_type(expected);
         let r_actual = self.resolve_type(actual);
 
-        let res = self.implicit_convert(SExprPos { expr, pos }, r_expected, r_actual);
+        let res = self.implicit_convert(SStatExprPos { expr, pos }, r_expected, r_actual);
 
         let expr = res.0;
         let c_actual = res.1;
@@ -494,7 +506,7 @@ impl Analyzer {
         // let stripped = self.scan_defs(body, fns.clone(), adts.clone());
 
         // re-insert dummy definition in case of recursive calls inside the body
-        let dummy_expr = SExprPos {
+        let dummy_expr = SStatExprPos {
             expr: Dummy,
             pos: body_pos,
         };
@@ -510,7 +522,7 @@ impl Analyzer {
         };
         self.fun_defs.insert(fun_id, dummy);
 
-        let transformed = self.convert(
+        let transformed = self.convert_stat_expr(
             body,
             fun_def_owned.ty,
             &more_locals,
@@ -537,64 +549,58 @@ impl Analyzer {
             ty: retrieved.ty,
             params: retrieved.params,
             captured_locals: retrieved.captured_locals,
-            body: NSExprPos::S(transformed_),
+            body: NSExprPos::S(transformed_.0),
         };
 
         self.fun_defs.insert(fun_id, new);
     }
 
     // Adds extra functions and adts to the map in the current scope
-    fn scan_defs(&mut self, e: ExprPos, fns: FnMap, adts: AdtMap) -> (ExprPos, FnMap, AdtMap) {
+    fn scan_defs(&mut self, e: Expr, fns: FnMap, adts: AdtMap) -> (Expr, FnMap, AdtMap) {
         let (fns_, adts_) = self.scan_names(&e, fns, adts);
         (self.scan_defs_rec(e, &fns_, &adts_), fns_, adts_)
     }
 
-    fn scan_names(&mut self, e: &ExprPos, fns: FnMap, adts: AdtMap) -> (FnMap, AdtMap) {
-        match &e.expr {
-            Expr::AdtDefn(defn, next) => {
-                if adts.contains_key(&defn.name) {
-                    // error
-                    let id = adts.get(&defn.name).unwrap();
-                    let og_pos = self.id_pos_map.get(&id).unwrap();
+    fn scan_names(&mut self, e: &Expr, mut fns: FnMap, mut adts: AdtMap) -> (FnMap, AdtMap) {
+        for se in e {
+            match &se.expr {
+                StatExpr::AdtDefn(defn) => {
+                    if adts.contains_key(&defn.name) {
+                        // error
+                        let id = adts.get(&defn.name).unwrap();
+                        let og_pos = self.id_pos_map.get(&id).unwrap();
 
-                    self.name_errors.push(AnalysisError::NameAlreadyUsedError(
-                        defn.name.to_string(),
-                        defn.name_pos,
-                        *og_pos,
-                    ));
-
-                    self.scan_names(&next, fns, adts)
-                } else {
-                    let id = self.fresh_id(defn.name.clone(), defn.name_pos);
-                    let more = adts.insert(defn.name.clone(), id);
-
-                    self.scan_names(&next, fns, more)
+                        self.name_errors.push(AnalysisError::NameAlreadyUsedError(
+                            defn.name.to_string(),
+                            defn.name_pos,
+                            *og_pos,
+                        ));
+                    } else {
+                        let id = self.fresh_id(defn.name.clone(), defn.name_pos);
+                        adts = adts.insert(defn.name.clone(), id);
+                    }
                 }
-            }
-            Expr::FunDefn(defn, next) => {
-                if fns.contains_key(&defn.name) {
-                    // error
-                    let id = fns.get(&defn.name).unwrap();
-                    let og_pos = self.id_pos_map.get(&id).unwrap();
+                StatExpr::FunDefn(defn) => {
+                    if fns.contains_key(&defn.name) {
+                        // error
+                        let id = fns.get(&defn.name).unwrap();
+                        let og_pos = self.id_pos_map.get(&id).unwrap();
 
-                    self.name_errors.push(AnalysisError::NameAlreadyUsedError(
-                        defn.name.to_string(),
-                        defn.name_pos,
-                        *og_pos,
-                    ));
-
-                    self.scan_names(&next, fns, adts)
-                } else {
-                    let id = self.fresh_id(defn.name.clone(), defn.name_pos);
-                    let more = fns.insert(defn.name.clone(), id);
-
-                    self.scan_names(&next, more, adts)
+                        self.name_errors.push(AnalysisError::NameAlreadyUsedError(
+                            defn.name.to_string(),
+                            defn.name_pos,
+                            *og_pos,
+                        ));
+                    } else {
+                        let id = self.fresh_id(defn.name.clone(), defn.name_pos);
+                        fns = fns.insert(defn.name.clone(), id);
+                    }
                 }
+                _ => {}
             }
-            Expr::Sequence(_, e2) => self.scan_names(&e2, fns, adts),
-            Expr::Let(_, _, after) => self.scan_names(&after, fns, adts),
-            _ => (fns, adts),
         }
+
+        (fns, adts)
     }
 
     fn convert_adt(&mut self, id: Identifier, defn: AdtDef, adts: &AdtMap) -> SAdtDef {
@@ -747,86 +753,74 @@ impl Analyzer {
     }
 
     // strips away all adt definitions, replaces function definitions with IDs
-    fn scan_defs_rec(&mut self, e: ExprPos, fns: &FnMap, adts: &AdtMap) -> ExprPos {
-        match e.expr {
-            Expr::AdtDefn(defn, next) => {
-                let id = *adts.get(&defn.name).unwrap();
+    fn scan_defs_rec(&mut self, mut expr: Expr, fns: &FnMap, adts: &AdtMap) -> Expr {
+        let mut ret: Expr = vec![];
 
-                if !self.adt_defs.contains_key(&id) {
-                    let converted = self.convert_adt(id, defn, adts);
-                    self.adt_defs.insert(id, converted);
+        for e in expr {
+            match e.expr {
+                StatExpr::AdtDefn(defn) => {
+                    let id = *adts.get(&defn.name).unwrap();
+
+                    if !self.adt_defs.contains_key(&id) {
+                        let converted = self.convert_adt(id, defn, adts);
+                        self.adt_defs.insert(id, converted);
+                    }
                 }
+                StatExpr::FunDefn(defn) => {
+                    let id = *fns.get(&defn.name).unwrap();
 
-                self.scan_defs_rec(*next, fns, adts)
-            }
-            Expr::FunDefn(defn, next) => {
-                let id = *fns.get(&defn.name).unwrap();
+                    // if name already exists, this error was already caught before. just ignore
+                    if !self.fun_defs.contains_key(&id) {
+                        let mut new_params: Vec<(String, SParamDef)> = vec![];
+                        let mut names: HashSet<String> = HashSet::new(); // check for duplicate param names
 
-                // if name already exists, this error was already caught before. just continue
-                if self.fun_defs.contains_key(&id) {
-                    self.scan_defs_rec(*next, fns, adts)
-                } else {
-                    let mut new_params: Vec<(String, SParamDef)> = vec![];
-                    let mut names: HashSet<String> = HashSet::new(); // check for duplicate param names
+                        for p in defn.params {
+                            if names.contains(&p.name) {
+                                self.name_errors.push(AnalysisError::DuplicateArgError(
+                                    p.name.clone(),
+                                    p.nme_pos,
+                                ));
+                            }
 
-                    for p in defn.params {
-                        if names.contains(&p.name) {
-                            self.name_errors
-                                .push(AnalysisError::DuplicateArgError(p.name.clone(), p.nme_pos));
+                            let id = self.fresh_id(p.name.clone(), p.nme_pos);
+                            names.insert(p.name.clone());
+                            new_params.push((
+                                p.name,
+                                SParamDef {
+                                    name: id,
+                                    ty: self.transform_type(&p.ty, p.nme_pos, &adts),
+                                    pos: p.nme_pos,
+                                },
+                            ))
                         }
 
-                        let id = self.fresh_id(p.name.clone(), p.nme_pos);
-                        names.insert(p.name.clone());
-                        new_params.push((
-                            p.name,
-                            SParamDef {
-                                name: id,
-                                ty: self.transform_type(&p.ty, p.nme_pos, &adts),
-                                pos: p.nme_pos,
-                            },
-                        ))
-                    }
+                        let name_pos = defn.name_pos;
 
-                    let name_pos = defn.name_pos;
+                        let nme = defn.name.to_string();
 
-                    let nme = defn.name.to_string();
+                        let defn = TmpFunDef {
+                            name_str: nme.to_string(),
+                            name: id,
+                            name_pos,
+                            ty: self.transform_type(&defn.ty, name_pos, &adts),
+                            params: new_params,
+                            captured_locals: None,
+                            body: NSExprPos::N(*defn.body),
+                        };
 
-                    let defn = TmpFunDef {
-                        name_str: nme.to_string(),
-                        name: id,
-                        name_pos,
-                        ty: self.transform_type(&defn.ty, name_pos, &adts),
-                        params: new_params,
-                        captured_locals: None,
-                        body: NSExprPos::N(*defn.body),
-                    };
+                        self.fun_defs.insert(id, defn);
 
-                    self.fun_defs.insert(id, defn);
-
-                    let ret = self.scan_defs_rec(*next, fns, adts);
-
-                    ExprPos {
-                        expr: Expr::FunDefId(id, name_pos, Box::new(ret)),
-                        pos: e.pos,
+                        ret.push(StatExprPos {
+                            expr: StatExpr::FunDefId(id, name_pos),
+                            pos: e.pos,
+                        })
                     }
                 }
+                _ => ret.push(e),
             }
-            Expr::Sequence(e1, e2) => {
-                let ret = self.scan_defs_rec(*e2, fns, adts);
-                ExprPos {
-                    expr: Expr::Sequence(e1, Box::new(ret)),
-                    pos: e.pos,
-                }
-            }
-            Expr::Let(pd, expr, after) => {
-                let ret = self.scan_defs_rec(*after, fns, adts);
-                ExprPos {
-                    expr: Expr::Let(pd, expr, Box::new(ret)),
-                    pos: e.pos,
-                }
-            }
-            _ => e,
         }
+
+        ret
     }
 
     fn find_ctor(
@@ -900,7 +894,7 @@ impl Analyzer {
 
     fn convert_args(
         &mut self,
-        args: Vec<ExprPos>,
+        args: Vec<StatExprPos>,
         types: &Vec<TypeOrVar>,
         qn: &QualifiedName,
         pos: PositionRange,
@@ -908,18 +902,18 @@ impl Analyzer {
         locals: &LocalsMap,
         fns: &FnMap,
         adts: &AdtMap,
-    ) -> Option<Vec<SExprPos>> {
+    ) -> Option<Vec<SStatExprPos>> {
         let args_len = types.len();
         let actual_len = args.len();
 
         // type check args
-        let mut transformed_args: Vec<Option<SExprPos>> = Vec::new();
+        let mut transformed_args: Vec<Converted> = Vec::new();
 
         // type check even if lengths are incompatible, do as much as possible
         // zip will return the longest allowed array
         for (arg, ty) in zip(args, types) {
             // type checking occurs here
-            transformed_args.push(self.convert(arg, *ty, prev_locals, locals, fns, adts));
+            transformed_args.push(self.convert_stat_expr(arg, *ty, prev_locals, locals, fns, adts));
         }
 
         // check args length correct
@@ -934,19 +928,26 @@ impl Analyzer {
         }
 
         // transform options into exprs
-        let mut transformed_final: Vec<SExprPos> = Vec::new();
+        let mut transformed_final: Vec<SStatExprPos> = Vec::new();
 
         for e_ in transformed_args {
-            transformed_final.push(e_?)
+            transformed_final.push(e_?.0)
         }
 
         Some(transformed_final)
     }
 
-    pub fn convert_top(&mut self, e: ExprPos) -> Option<SExprPos> {
+    pub fn convert_top(&mut self, e: Expr) -> Option<SExpr> {
         // scan definitions
         let stripped = self.scan_defs(e, TreeMap::new(), TreeMap::new());
-        let pos = stripped.0.pos;
+        let pos = match stripped.0.last() {
+            Some(e) => e.pos,
+            None => PositionRange {
+                start: Position { line_no: 0, pos: 0 },
+                end: Position { line_no: 0, pos: 0 },
+            },
+        };
+
         let ret = self.convert(
             stripped.0,
             TypeOrVar::Ty(SType::Top),
@@ -997,23 +998,25 @@ impl Analyzer {
     // this really should be refactored...
     fn convert_maybe_float(
         &mut self,
-        e1: ExprPos,
-        e2: ExprPos,
+        e1: StatExprPos,
+        e2: StatExprPos,
         prev_locals: &LocalsMap,
         locals: &LocalsMap,
         fns: &FnMap,
         adts: &AdtMap,
         error_on_neq: bool,
-    ) -> Result<(SExprPos, SExprPos, bool, bool), Option<(SExprPos, SExprPos, TypeOrVar, TypeOrVar)>>
-    {
+    ) -> Result<
+        (SStatExprPos, SStatExprPos, bool, bool),
+        Option<(SStatExprPos, SStatExprPos, TypeOrVar, TypeOrVar)>,
+    > {
         let left_t = self.fresh_type_var(e1.pos);
         let right_t = self.fresh_type_var(e2.pos);
 
         let e1_p = e1.pos;
         let e2_p = e2.pos;
 
-        let s_e1_ = self.convert(e1, left_t, prev_locals, locals, fns, adts);
-        let s_e2_ = self.convert(e2, right_t, prev_locals, locals, fns, adts);
+        let s_e1_ = self.convert_stat_expr(e1, left_t, prev_locals, locals, fns, adts);
+        let s_e2_ = self.convert_stat_expr(e2, right_t, prev_locals, locals, fns, adts);
 
         if s_e1_.is_none() || s_e2_.is_none() {
             return Err(None);
@@ -1029,7 +1032,7 @@ impl Analyzer {
         if matches!(left_r, TypeOrVar::Ty(SType::Top))
             || matches!(right_r, TypeOrVar::Ty(SType::Top))
         {
-            return Ok((s_e1, s_e2, false, true));
+            return Ok((s_e1.0, s_e2.0, false, true));
         }
 
         let mut fail = false;
@@ -1058,21 +1061,21 @@ impl Analyzer {
         }
 
         if fail {
-            return Err(Some((s_e1, s_e2, left_r, right_r)));
+            return Err(Some((s_e1.0, s_e2.0, left_r, right_r)));
         }
 
         // remaining case handling
         if matches_float(&left_r) || matches_float(&right_r) {
             let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
-            let e1 = self.add_constraint_pos(s_e1, float_prim, left_r).unwrap();
-            let e2 = self.add_constraint_pos(s_e2, float_prim, right_r).unwrap();
+            let e1 = self.add_constraint_pos(s_e1.0, float_prim, left_r).unwrap();
+            let e2 = self.add_constraint_pos(s_e2.0, float_prim, right_r).unwrap();
 
             Ok((e1, e2, true, false))
         } else {
             // both are integers
             let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
-            let e1 = self.add_constraint_pos(s_e1, int_prim, left_r).unwrap();
-            let e2 = self.add_constraint_pos(s_e2, int_prim, right_r).unwrap();
+            let e1 = self.add_constraint_pos(s_e1.0, int_prim, left_r).unwrap();
+            let e2 = self.add_constraint_pos(s_e2.0, int_prim, right_r).unwrap();
 
             Ok((e1, e2, false, false))
         }
@@ -1621,8 +1624,6 @@ impl Analyzer {
 
                     ret.push(witness);
                 }
-
-
             }
         }
 
@@ -1656,41 +1657,64 @@ impl Analyzer {
 
         let mut res = self.usefulness(Some(*ty), &pat_stacks, &vec![&self.get_wildcard(ty)])?;
 
-        Ok(res.iter_mut().map(|w| match w.pop() {
-            Some(w) => w,
-            _ => unreachable!("Got witness with zero elements")
-        }).collect())
+        Ok(res
+            .iter_mut()
+            .map(|w| match w.pop() {
+                Some(w) => w,
+                _ => unreachable!("Got witness with zero elements"),
+            })
+            .collect())
     }
 
     fn convert(
         &mut self,
-        e: ExprPos,
+        expr: Expr,
         expected: TypeOrVar,
         prev_locals: &LocalsMap,
         locals: &LocalsMap,
         fns: &FnMap,
         adts: &AdtMap,
-    ) -> Option<SExprPos> {
-        pub fn get_local(
-            name: &String,
-            prev_locals: &LocalsMap,
-            locals: &LocalsMap,
-        ) -> Option<Local> {
-            match locals.get(name) {
-                Some(t) => Some(*t),
-                None => match prev_locals.get(name) {
-                    Some(t) => Some(*t),
-                    None => None,
-                },
+    ) -> Option<SExpr> {
+        let mut ret: SExpr = vec![];
+
+        let mut prev_locals = prev_locals.clone();
+        let mut locals = locals.clone();
+
+        for e in expr {
+            let converted = self.convert_stat_expr(e, expected, &prev_locals, &locals, fns, adts)?;
+
+            match converted.1 {
+                Some((p, l)) => (prev_locals, locals) = (p, l),
+                None => { }
             }
+
+            ret.push(converted.0);
         }
 
+        Some(ret)
+    }
+
+    // Return spec:
+    // Option<Converted expression, Option<More prev locals, more locals>>
+    // Outer option is Some() when conversion successful.
+    // Inner option is Some() when new locals were added.
+    fn convert_stat_expr(
+        &mut self,
+        e: StatExprPos,
+        expected: TypeOrVar,
+        prev_locals: &LocalsMap,
+        locals: &LocalsMap,
+        fns: &FnMap,
+        adts: &AdtMap,
+    ) -> Converted {
         let pos = e.pos;
 
-        let s_expr: SExprPos = match e.expr {
-            Expr::Nested(e) => {
+        let mut more: Option<(LocalsMap, LocalsMap)> = None;
+
+        let s_expr: SStatExprPos = match e.expr {
+            StatExpr::Nested(e) => {
                 // we want a fresh map containing just the functions and adts scanned here
-                let stripped = self.scan_defs(*e, TreeMap::new(), TreeMap::new());
+                let stripped = self.scan_defs(e, TreeMap::new(), TreeMap::new());
 
                 // now combine
                 let mut fns_combined = fns.clone();
@@ -1707,7 +1731,7 @@ impl Analyzer {
                 let ret = self.convert(
                     stripped.0,
                     expected,
-                    prev_locals,
+                    &prev_locals,
                     &LocalsMap::new(),
                     &fns_combined,
                     &adts_combined,
@@ -1745,13 +1769,13 @@ impl Analyzer {
                     _ => (),
                 }
 
-                ret?
+                SStatExprPos { expr: SStatExpr::Nested(ret?), pos }
             }
 
-            Expr::FunDefn(_, after) => {
-                self.convert(*after, expected, prev_locals, locals, fns, adts)?
+            StatExpr::FunDefn(_) => {
+                SStatExprPos { expr: Dummy, pos }
             }
-            Expr::Variable(nme) => {
+            StatExpr::Variable(nme) => {
                 // not yet implemented
                 if !nme.scopes.is_empty() {
                     unimplemented!();
@@ -1822,11 +1846,11 @@ impl Analyzer {
                     }
                 }
 
-                let e = SExpr::Variable(local.0, s_members);
+                let e = SStatExpr::Variable(local.0, s_members);
 
                 self.add_constraint(e, expected, ty, pos)?
             }
-            Expr::Call(qn, args) => {
+            StatExpr::Call(qn, args) => {
                 // get id, then def
                 let fun_id = *match fns.get(&qn.name) {
                     Some(id) => id,
@@ -1859,14 +1883,14 @@ impl Analyzer {
                 // self.print_type(&ret_type);
 
                 let transformed_args =
-                    self.convert_args(args, &types, &qn, e.pos, prev_locals, locals, fns, adts);
+                    self.convert_args(args, &types, &qn, e.pos, &prev_locals, &locals, fns, adts);
 
-                let e = SExpr::Call(fun_id, transformed_args?);
+                let e = SStatExpr::Call(fun_id, transformed_args?);
                 // add type constraint
                 let ret = self.add_constraint(e, expected, ret_type, pos);
 
                 // transform function
-                self.transform_fn(&qn.name, pos, prev_locals, fns, adts);
+                self.transform_fn(&qn.name, pos, &prev_locals, fns, adts);
 
                 // println!("Ret type:");
                 // self.print_type(&self.resolve_type(ret_type));
@@ -1875,7 +1899,7 @@ impl Analyzer {
 
                 ret?
             }
-            Expr::Ctor(qn, args) => {
+            StatExpr::Ctor(qn, args) => {
                 // NOTE: Adt() actually calls Adt::Base(). We need to handle this.
 
                 // no support for importing scopes yet
@@ -1898,14 +1922,14 @@ impl Analyzer {
 
                 // 2. convert args
                 let transformed_args =
-                    self.convert_args(args, &types, &qn, e.pos, prev_locals, locals, fns, adts);
+                    self.convert_args(args, &types, &qn, e.pos, &prev_locals, &locals, fns, adts);
 
                 // 3. check type
                 let ctor_type = TypeOrVar::Ty(SType::UserType(adt_id));
 
                 match transformed_args {
                     Some(args) => {
-                        let expr = SExpr::Ctor(adt_id, ctor_id, args);
+                        let expr = SStatExpr::Ctor(adt_id, ctor_id, args);
                         self.add_constraint(expr, expected, ctor_type, e.pos)?
                     }
                     None => {
@@ -1915,53 +1939,37 @@ impl Analyzer {
                     }
                 }
             }
-            Expr::Sequence(e1, e2) => {
-                let e1 = self.convert(
-                    *e1,
-                    TypeOrVar::Ty(SType::Top),
-                    prev_locals,
-                    locals,
-                    fns,
-                    adts,
-                );
-                let e2 = self.convert(*e2, expected, prev_locals, locals, fns, adts)?;
-
-                match e1 {
-                    Some(e) => SExprPos {
-                        expr: SExpr::Sequence(Box::new(e), Box::new(e2)),
-                        pos,
-                    },
-                    None => return None,
-                }
-            }
-            Expr::Ite(cond, if_e, elif_e, else_e) => {
+            StatExpr::Ite(cond, if_e, elif_e, else_e) => {
                 let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
-                let cond_conv = self.convert(*cond, bool_prim, prev_locals, locals, fns, adts);
+                let cond_conv =
+                    self.convert_stat_expr(*cond, bool_prim, prev_locals, locals, fns, adts);
 
-                let if_e_conv = self.convert(*if_e, expected, prev_locals, locals, fns, adts);
+                let if_e_conv =
+                    self.convert_stat_expr(*if_e, expected, prev_locals, locals, fns, adts);
 
-                let mut elif_e_conv_: Vec<(Option<SExprPos>, Option<SExprPos>)> = Vec::new();
+                let mut elif_e_conv_: Vec<(Converted, Converted)> =
+                    Vec::new();
 
                 for e in elif_e {
                     elif_e_conv_.push((
-                        self.convert(*e.0, bool_prim, prev_locals, locals, fns, adts),
-                        self.convert(*e.1, expected, prev_locals, locals, fns, adts),
+                        self.convert_stat_expr(*e.0, bool_prim, prev_locals, locals, fns, adts),
+                        self.convert_stat_expr(*e.1, expected, prev_locals, locals, fns, adts),
                     ))
                 }
 
                 let else_e_conv = match else_e {
-                    Some(e) => Some(Box::new(self.convert(
+                    Some(e) => Some(Box::new(self.convert_stat_expr(
                         *e,
                         expected,
                         prev_locals,
                         locals,
                         fns,
                         adts,
-                    )?)),
-                    None => Some(Box::new(self.convert(
-                        ExprPos {
-                            expr: Expr::UnitLit,
+                    )?.0)),
+                    None => Some(Box::new(self.convert_stat_expr(
+                        StatExprPos {
+                            expr: StatExpr::UnitLit,
                             pos,
                         }, // implicit unit literal for else branch
                         expected,
@@ -1969,35 +1977,36 @@ impl Analyzer {
                         locals,
                         fns,
                         adts,
-                    )?)),
+                    )?.0)),
                 };
 
                 // Only check the option values now to maximise the number of errors outputted at once
 
-                let mut elif_e_conv: Vec<(Box<SExprPos>, Box<SExprPos>)> = Vec::new();
+                let mut elif_e_conv: Vec<(Box<SStatExprPos>, Box<SStatExprPos>)> = Vec::new();
 
                 for e in elif_e_conv_ {
-                    elif_e_conv.push((Box::new(e.0?), Box::new(e.1?)))
+                    elif_e_conv.push((Box::new(e.0?.0), Box::new(e.1?.0)))
                 }
 
-                SExprPos {
-                    expr: SExpr::Ite(
-                        Box::new(cond_conv?),
-                        Box::new(if_e_conv?),
+                SStatExprPos {
+                    expr: SStatExpr::Ite(
+                        Box::new(cond_conv?.0),
+                        Box::new(if_e_conv?.0),
                         elif_e_conv,
                         else_e_conv,
                     ),
                     pos,
                 }
             }
-            Expr::Match(scrut, cases) => {
+            StatExpr::Match(scrut, cases) => {
                 // Find scrut type. Must be known
                 let scrut_ty = self.fresh_type_var(scrut.pos);
 
                 let scrut_pos = scrut.pos;
 
                 // Convert.
-                let s_scrut = self.convert(*scrut, scrut_ty, prev_locals, locals, fns, adts);
+                let s_scrut =
+                    self.convert_stat_expr(*scrut, scrut_ty, prev_locals, locals, fns, adts);
 
                 let ty = self.resolve_type(scrut_ty);
 
@@ -2011,15 +2020,21 @@ impl Analyzer {
                 // for each matchcase, convert the pattern
                 for case in cases {
                     // convert
-                    let maybe = self.check_and_bind(adts, case.pat, ty, locals);
+                    let maybe = self.check_and_bind(adts, case.pat, ty, &locals);
                     if maybe.is_none() {
                         success = false;
                         continue;
                     }
                     // evaluate body using new locals
                     let (s_pat, more_locals) = maybe.unwrap();
-                    let s_body =
-                        self.convert(case.body, expected, prev_locals, &more_locals, fns, adts);
+                    let s_body = self.convert_stat_expr(
+                        case.body,
+                        expected,
+                        prev_locals,
+                        &more_locals,
+                        fns,
+                        adts,
+                    );
 
                     if s_body.is_none() {
                         success = false;
@@ -2028,7 +2043,7 @@ impl Analyzer {
 
                     s_cases.push(SMatchCase {
                         pat: s_pat,
-                        body: s_body.unwrap(),
+                        body: s_body.unwrap().0,
                     });
                 }
 
@@ -2044,7 +2059,6 @@ impl Analyzer {
 
                 let witnesses = self.get_witnesss(&ty, &pats);
 
-                
                 match witnesses {
                     Ok(res) => {
                         if !res.is_empty() {
@@ -2054,29 +2068,29 @@ impl Analyzer {
                             ));
                             success = false
                         }
-                    },
+                    }
                     Err(pos) => {
                         self.type_errors.push(TypeError::TypeNeededError(pos));
                         success = false;
                     }
                 }
-                
 
                 if success {
-                    SExprPos {
-                        expr: SExpr::Match(Box::new(s_scrut?), s_cases),
+                    SStatExprPos {
+                        expr: SStatExpr::Match(Box::new(s_scrut?.0), s_cases),
                         pos,
                     }
                 } else {
                     return None;
                 }
             }
-            Expr::While(cond, body) => {
+            StatExpr::While(cond, body) => {
                 let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
-                let cond_conv = self.convert(*cond, bool_prim, prev_locals, locals, fns, adts);
+                let cond_conv =
+                    self.convert_stat_expr(*cond, bool_prim, prev_locals, locals, fns, adts);
 
-                let body_conv = self.convert(
+                let body_conv = self.convert_stat_expr(
                     *body,
                     TypeOrVar::Ty(SType::Top),
                     prev_locals,
@@ -2085,44 +2099,44 @@ impl Analyzer {
                     adts,
                 );
 
-                let e = SExpr::While(Box::new(cond_conv?), Box::new(body_conv?));
+                let e = SStatExpr::While(Box::new(cond_conv?.0), Box::new(body_conv?.0));
                 // while expression has type unit
                 self.add_constraint(e, expected, TypeOrVar::Ty(SType::Primitve(Prim::Bool)), pos)?
             }
-            Expr::IntLit(v) => self.add_constraint(
-                SExpr::IntLit(v),
+            StatExpr::IntLit(v) => self.add_constraint(
+                SStatExpr::IntLit(v),
                 expected,
                 TypeOrVar::Ty(SType::Primitve(Prim::Int)),
                 pos,
             )?,
-            Expr::FloatLit(v) => self.add_constraint(
-                SExpr::FloatLit(v),
+            StatExpr::FloatLit(v) => self.add_constraint(
+                SStatExpr::FloatLit(v),
                 expected,
                 TypeOrVar::Ty(SType::Primitve(Prim::Float)),
                 pos,
             )?,
-            Expr::StringLit(v) => self.add_constraint(
-                SExpr::StringLit(v.to_string()),
+            StatExpr::StringLit(v) => self.add_constraint(
+                SStatExpr::StringLit(v.to_string()),
                 expected,
                 TypeOrVar::Ty(SType::Primitve(Prim::String)),
                 pos,
             )?,
-            Expr::BoolLit(v) => self.add_constraint(
-                SExpr::BoolLit(v),
+            StatExpr::BoolLit(v) => self.add_constraint(
+                SStatExpr::BoolLit(v),
                 expected,
                 TypeOrVar::Ty(SType::Primitve(Prim::Bool)),
                 pos,
             )?,
-            Expr::UnitLit => self.add_constraint(
-                SExpr::UnitLit,
+            StatExpr::UnitLit => self.add_constraint(
+                SStatExpr::UnitLit,
                 expected,
                 TypeOrVar::Ty(SType::Primitve(Prim::Unit)),
                 pos,
             )?,
-            Expr::Infix(op, e1, e2) => match op {
+            StatExpr::Infix(op, e1, e2) => match op {
                 Op::Add | Op::Minus | Op::Times | Op::Divide | Op::Mod => {
                     let converted =
-                        self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, true);
+                        self.convert_maybe_float(*e1, *e2, &prev_locals, &locals, fns, adts, true);
 
                     let float_prim = TypeOrVar::Ty(SType::Primitve(Prim::Float));
                     let int_prim = TypeOrVar::Ty(SType::Primitve(Prim::Int));
@@ -2149,7 +2163,7 @@ impl Analyzer {
                 Op::Not => unreachable!(),
                 Op::Or | Op::And | Op::Lt | Op::Lte | Op::Gt | Op::Gte => {
                     let converted =
-                        self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, true);
+                        self.convert_maybe_float(*e1, *e2, &prev_locals, &locals, fns, adts, true);
 
                     let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
@@ -2173,7 +2187,7 @@ impl Analyzer {
                     let e2_p = e2.pos;
 
                     let converted =
-                        self.convert_maybe_float(*e1, *e2, prev_locals, locals, fns, adts, false);
+                        self.convert_maybe_float(*e1, *e2, &prev_locals, &locals, fns, adts, false);
 
                     let bool_prim = TypeOrVar::Ty(SType::Primitve(Prim::Bool));
 
@@ -2204,7 +2218,7 @@ impl Analyzer {
                     }
                 }
             },
-            Expr::Prefix(op, expr) => {
+            StatExpr::Prefix(op, expr) => {
                 let e_pos = expr.pos;
 
                 // type already known for boolean expressions
@@ -2214,7 +2228,7 @@ impl Analyzer {
                     _ => unreachable!(),
                 };
 
-                let converted = self.convert(*expr, ty, prev_locals, locals, fns, adts);
+                let converted = self.convert_stat_expr(*expr, ty, prev_locals, locals, fns, adts);
 
                 let l_ty_r = self.resolve_type(ty);
 
@@ -2230,11 +2244,11 @@ impl Analyzer {
                     return None;
                 }
 
-                let expr = Prefix(op, Box::new(converted?));
+                let expr = Prefix(op, Box::new(converted?.0));
 
                 self.add_constraint(expr, expected, ty, pos)?
             }
-            Expr::Let(pd, expr, after) => {
+            StatExpr::Let(pd, expr) => {
                 // Check for name conflicts. Allow variable shadowing
                 // If there is a name conflict, we try to continue using the new
                 // definition of the variable to minimise errors for the user.
@@ -2255,7 +2269,7 @@ impl Analyzer {
                 let ty = self.transform_type(&pd.ty, pd.nme_pos, &adts);
 
                 // eval body
-                let body = self.convert(*expr, ty, prev_locals, locals, fns, adts);
+                let body = self.convert_stat_expr(*expr, ty, prev_locals, locals, fns, adts);
 
                 // get fresh local
                 let new_local = self.fresh_id(pd.name.to_string(), pd.nme_pos);
@@ -2264,34 +2278,32 @@ impl Analyzer {
                 let more_prev_locals = prev_locals.insert(pd.name.to_string(), (new_local, ty));
                 let more_locals = locals.insert(pd.name, (new_local, ty));
 
-                let after =
-                    self.convert(*after, expected, &more_prev_locals, &more_locals, fns, adts)?;
+                more = Some((more_prev_locals, more_locals));
 
-                SExprPos {
-                    expr: SExpr::Let(
+                SStatExprPos {
+                    expr: SStatExpr::Let(
                         SParamDef {
                             name: new_local,
                             ty: ty,
                             pos: pd.nme_pos,
                         },
-                        Box::new(body?),
-                        Box::new(after),
+                        Box::new(body?.0),
                     ),
                     pos,
                 }
             }
-            Expr::AssignmentOp(op, lhs, rhs, after) => {
+            StatExpr::AssignmentOp(op, lhs, rhs) => {
                 let l_pos = lhs.pos;
 
                 // LHS must be a variable (for now)
-                if !matches!(lhs.expr, Expr::Variable(_)) {
+                if !matches!(lhs.expr, StatExpr::Variable(_)) {
                     self.type_errors.push(TypeError::NotAssignableError(l_pos));
                     return None;
                 };
 
                 let ty = self.fresh_type_var(l_pos);
 
-                let lhs = self.convert(*lhs, ty, prev_locals, locals, fns, adts);
+                let lhs = self.convert_stat_expr(*lhs, ty, prev_locals, locals, fns, adts);
 
                 let l_ty_r = self.resolve_type(ty);
 
@@ -2324,17 +2336,16 @@ impl Analyzer {
                 }
 
                 // LHS and RHS must be the same type, but RHS can implicitly convert.
-                let rhs = self.convert(*rhs, l_ty_r, prev_locals, locals, fns, adts);
+                let rhs = self.convert_stat_expr(*rhs, l_ty_r, prev_locals, locals, fns, adts);
 
-                let after = self.convert(*after, expected, prev_locals, locals, fns, adts);
 
                 let expr =
-                    SExpr::AssignmentOp(op, Box::new(lhs?), Box::new(rhs?), Box::new(after?));
+                    SStatExpr::AssignmentOp(op, Box::new(lhs?.0), Box::new(rhs?.0));
 
                 self.add_constraint(expr, expected, ty, pos)?
             }
-            Expr::AdtDefn(_, _) => unreachable!(),
-            Expr::FunDefId(id, _, after) => {
+            StatExpr::AdtDefn(_) => unreachable!(),
+            StatExpr::FunDefId(id, _) => {
                 // capture locals
 
                 let retrieved = self.fun_defs.remove(&id).unwrap();
@@ -2351,11 +2362,11 @@ impl Analyzer {
 
                 self.fun_defs.insert(id, new);
 
-                self.convert(*after, expected, prev_locals, locals, fns, adts)?
+                SStatExprPos { expr: Dummy, pos }
             }
         };
 
-        Some(s_expr)
+        Some((s_expr, more))
     }
 }
 
