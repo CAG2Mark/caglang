@@ -765,6 +765,12 @@ impl Analyzer {
                         let converted = self.convert_adt(id, defn, adts);
                         self.adt_defs.insert(id, converted);
                     }
+
+                    // quick hack, adt definitions have a unit type
+                    ret.push(StatExprPos {
+                        expr: StatExpr::UnitLit,
+                        pos: e.pos,
+                    })
                 }
                 StatExpr::FunDefn(defn) => {
                     let id = *fns.get(&defn.name).unwrap();
