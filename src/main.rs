@@ -198,6 +198,22 @@ fn single_posrange(line_no: usize, pos: usize) -> PositionRange {
     }
 }
 
+fn format_codes(items: Vec<String>, sep: &str) -> String {
+    let mut ret = "".to_string();
+    let mut first = true;
+
+    for s in items {
+        if !first {
+            ret += sep;
+        }
+        first = false;
+
+        ret += &format!("`\x1b[1m{}\x1b[0m`", s);
+    }
+
+    ret
+}
+
 fn print_parse_error(file_name: &String, input: &String, error: parser::ParseError) {
     let chunks: Vec<&str> = input.lines().collect();
 
@@ -324,8 +340,8 @@ fn print_analysis_error(file_name: &String, input: &String, error: analyzer::Ana
             let msg = format!("identifier with name `\x1b[1m{}\x1b[0m` has already been bound", name);
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
-        analyzer::AnalysisError::MatchNotExhaustiveErr(cand, pos) => {
-            let msg = format!("match is not exhaustive; it does not match `\x1b[1m{}\x1b[0m`", cand);
+        analyzer::AnalysisError::MatchNotExhaustiveErr(cands, pos) => {
+            let msg = format!("match is not exhaustive; it does not match {}", format_codes(cands, ", "));
             print_error_at(file_name, input, "error", &pos, &msg, ERR_COLOR, "^");
         },
     }

@@ -145,7 +145,7 @@ pub enum AnalysisError {
     AdtNotFoundError(String, PositionRange),
     AdtVariantNotFoundError(String, String, PositionRange), // adt name, adt variant name, position
     AdtNoBaseError(String, PositionRange, PositionRange), // adt name, error position, suggested position to insert Base
-    MatchNotExhaustiveErr(String, PositionRange),         // candidate, position
+    MatchNotExhaustiveErr(Vec<String>, PositionRange),         // candidate, position
 }
 
 fn is_type_var(ty: &TypeOrVar) -> bool {
@@ -1406,7 +1406,7 @@ impl Analyzer {
         ty: Option<SType>,
         pat_stacks: &'a Vec<Vec<&'a SPatternPos>>,
         q: &'a Vec<&'a SPatternPos>,
-    ) -> Result<Option<Vec<Witness>>, PositionRange> {
+    ) -> Result<Vec<Vec<Witness>>, PositionRange> {
         // Base cases
 
         fn to_witness_vec<'a>(q: &'a Vec<&'a SPatternPos>) -> Vec<Witness> {
@@ -1438,13 +1438,13 @@ impl Analyzer {
         }
 
         if pat_stacks.len() == 0 {
-            return Ok(Some(to_witness_vec(q)));
+            return Ok(vec![to_witness_vec(q)]);
         }
 
         let cols = pat_stacks.first().unwrap().len();
         if cols == 0 {
             // return Ok(pat_stacks.to_vec());
-            return Ok(None);
+            return Ok(vec![]);
         }
 
         // type must exist
@@ -1470,7 +1470,7 @@ impl Analyzer {
             let mut new_pat_stacks: Vec<Vec<&'a SPatternPos>> = vec![];
 
             for p in pat_stacks {
-                let mut new_stack:Vec<&'a SPatternPos> = vec![];
+                let mut new_stack: Vec<&'a SPatternPos> = vec![];
                 for i in 1..p.len() {
                     new_stack.push(p.get(i).unwrap())
                 }
@@ -1495,18 +1495,14 @@ impl Analyzer {
             // Recurse
             let wits = self.usefulness(next_ty, &new_pat_stacks, &new_q)?;
 
-            match wits {
-                Some(wits) => {
-                    let mut ret = vec![Witness::Wildcard];
+            let mut ret: Vec<Vec<Witness>> = vec![];
 
-                    for w in wits {
-                        ret.push(w)
-                    }
-
-                    return Ok(Some(ret))
-                },
-                None => return Ok(None)
+            for mut w in wits {
+                w.insert(0, Witness::Wildcard);
+                ret.push(w);
             }
+
+            return Ok(ret);
         }
 
         // (!!) Otherwise, we do the usual checking.
@@ -1545,6 +1541,8 @@ impl Analyzer {
         //      For each ctor q' in specialize(c, q),
         //           Compute usefuless(specialize(c, q_1), ..., specialize(c, q_n), q')
 
+        let mut ret: Vec<Vec<Witness>> = vec![];
+
         for c in ctors {
             // Specialize q
             let q_specialized = match self.specialize_pats(&c, q)? {
@@ -1571,76 +1569,77 @@ impl Analyzer {
                     None => None,
                 };
 
-                match self.usefulness(next_ty, &pats_specialized, &q_)? {
-                    Some(mut witness) => {
-                        // Witness found, undo specialization and insert witness
+                let mut witnesses = self.usefulness(next_ty, &pats_specialized, &q_)?;
 
-                        // Specialization involves unpacking the arguments of the first
-                        // column and pushing them to the front.
+                for mut witness in witnesses {
+                    // Witness found, undo specialization and insert witness
+
+                    // Specialization involves unpacking the arguments of the first
+                    // column and pushing them to the front.
+                    //
+                    // To undo this, we simply pop the first n items of the witness,
+                    // where n is the number of items in the current constructor,
+                    // wrap those back into the constructor, then push that ctor
+                    // back to the front of the witnesses list.
+
+                    witness.reverse();
+
+                    let first: Witness = match c {
+                        // These do not consume any values
+                        Ctor::Arbitrary => match ty {
+                            SType::Primitve(Prim::Int) => Witness::Int,
+                            SType::Primitve(Prim::Float) => Witness::Float,
+                            SType::Primitve(Prim::String) => Witness::String,
+                            _ => unreachable!(),
+                        },
+                        Ctor::BoolCtor(b) => Witness::Bool(b),
+
+                        // Determine the length of the parameters, which we call n, then
+                        // consume the first n items of `witness`.
                         //
-                        // To undo this, we simply pop the first n items of the witness,
-                        // where n is the number of items in the current constructor,
-                        // wrap those back into the constructor, then push that ctor
-                        // back to the front of the witnesses list.
+                        // Wrap them in a ctor then push them back to the start of witness.
+                        Ctor::AdtCtor(id, variant) => {
+                            let adt_def = self.get_adt_def(&id).unwrap();
+                            let var_def = adt_def.variants.get(&variant).unwrap();
 
-                        witness.reverse();
+                            let n = adt_def.params.len() + var_def.params.len();
 
-                        let first: Witness = match c {
-                            // These do not consume any values
-                            Ctor::Arbitrary => match ty {
-                                SType::Primitve(Prim::Int) => Witness::Int,
-                                SType::Primitve(Prim::Float) => Witness::Float,
-                                SType::Primitve(Prim::String) => Witness::String,
-                                _ => unreachable!(),
-                            },
-                            Ctor::BoolCtor(b) => Witness::Bool(b),
+                            let mut param_wits: Vec<Witness> = vec![];
 
-                            // Determine the length of the parameters, which we call n, then
-                            // consume the first n items of `witness`.
-                            //
-                            // Wrap them in a ctor then push them back to the start of witness.
-                            Ctor::AdtCtor(id, variant) => {
-                                let adt_def = self.get_adt_def(&id).unwrap();
-                                let var_def = adt_def.variants.get(&variant).unwrap();
-
-                                let n = adt_def.params.len() + var_def.params.len();
-
-                                let mut param_wits: Vec<Witness> = vec![];
-
-                                for _ in 0..n {
-                                    param_wits.push(witness.pop().unwrap());
-                                }
-
-                                Witness::Adt(id, variant, param_wits)
+                            for _ in 0..n {
+                                param_wits.push(witness.pop().unwrap());
                             }
-                        };
 
-                        witness.push(first);
+                            Witness::Adt(id, variant, param_wits)
+                        }
+                    };
 
-                        witness.reverse();
+                    witness.push(first);
 
-                        return Ok(Some(witness));
-                    }
-                    None => continue,
+                    witness.reverse();
+
+                    ret.push(witness);
                 }
+
+
             }
         }
 
         // Ok(witnesses)
         // Ok(res)
 
-        Ok(None)
+        Ok(ret)
     }
 
     // Algorithm adapted from:
     // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_mir_build/thir/pattern/usefulness/index.html
     // Original paper:
     // http://moscova.inria.fr/~maranget/papers/warn/index.html
-    fn get_witness(
+    fn get_witnesss(
         &self,
         ty: &TypeOrVar,
         pats: &Vec<&SPatternPos>,
-    ) -> Result<Option<Witness>, PositionRange> {
+    ) -> Result<Vec<Witness>, PositionRange> {
         let ty = match ty {
             TypeOrVar::Ty(t) => t,
             TypeOrVar::Var(_, pos) => {
@@ -1654,12 +1653,12 @@ impl Analyzer {
             pat_stacks.push(vec![p]);
         }
 
-        let res = self.usefulness(Some(*ty), &pat_stacks, &vec![&self.get_wildcard(ty)])?;
+        let mut res = self.usefulness(Some(*ty), &pat_stacks, &vec![&self.get_wildcard(ty)])?;
 
-        match res {
-            Some(mut w) => Ok(Some(w.pop().unwrap())),
-            None => Ok(None),
-        }
+        Ok(res.iter_mut().map(|w| match w.pop() {
+            Some(w) => w,
+            _ => unreachable!("Got witness with zero elements")
+        }).collect())
     }
 
     fn convert(
@@ -2042,24 +2041,25 @@ impl Analyzer {
                     pats.push(&case.pat);
                 }
 
-                let witness = self.get_witness(&ty, &pats);
+                let witnesses = self.get_witnesss(&ty, &pats);
 
-                match witness {
-                    Ok(res) => match res {
-                        Some(wit) => {
+                
+                match witnesses {
+                    Ok(res) => {
+                        if !res.is_empty() {
                             self.name_errors.push(AnalysisError::MatchNotExhaustiveErr(
-                                self.witness_to_string(&wit),
+                                res.iter().map(|w| self.witness_to_string(w)).collect(),
                                 scrut_pos,
                             ));
                             success = false
                         }
-                        None => (),
                     },
                     Err(pos) => {
                         self.type_errors.push(TypeError::TypeNeededError(pos));
                         success = false;
                     }
                 }
+                
 
                 if success {
                     SExprPos {
