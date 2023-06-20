@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::iter::zip;
@@ -638,7 +639,7 @@ impl Analyzer {
             })
         }
 
-        let mut s_variants: HashMap<Identifier, SAdtVariant> = HashMap::new();
+        let mut s_variants: BTreeMap<Identifier, SAdtVariant> = BTreeMap::new();
 
         let mut variant_name_map: HashMap<String, Identifier> = HashMap::new();
         let mut variant_pos_map: HashMap<String, PositionRange> = HashMap::new();

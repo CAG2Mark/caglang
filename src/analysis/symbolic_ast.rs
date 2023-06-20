@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 
 use crate::parsing::position::*;
 use crate::parsing::tokens::{Prim, Op, AssignOp};
@@ -44,7 +44,7 @@ pub struct SAdtDef {
     pub params: Vec<SParamDef>,
     pub name_map: HashMap<String, Identifier>,
     pub variant_name_map: HashMap<String, Identifier>,
-    pub variants: HashMap<Identifier, SAdtVariant>,
+    pub variants: BTreeMap<Identifier, SAdtVariant>,
     // for internal use
     pub wildcard: SPatternPos
 }
