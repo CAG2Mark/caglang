@@ -5,7 +5,7 @@ use crate::tokens::*;
 
 use crate::parsing::position::*;
 
-fn try_parse(regex: &Regex, input: &String) -> Option<String> {
+fn try_parse(regex: &Regex, input: &str) -> Option<String> {
     let find = regex.find(input);
 
     match find {
@@ -252,7 +252,7 @@ pub fn lex(input: &String) -> Result<Vec<TokenPos>, Position> {
         progress = false;
         let file_pos = string_index_to_pos(&spl, pos);
         let pos_temp = pos;
-        let cur = input[pos..].to_string();
+        let cur = &input[pos..];
 
         // Try parsing all possible regexes, in order (highest priority first, then longest match)
 
