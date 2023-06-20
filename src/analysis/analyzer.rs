@@ -2265,7 +2265,7 @@ impl Analyzer {
                 }
 
                 // check type for minus operation
-                if matches!(op, Op::Minus) && !matches_numerical(&ty) {
+                if matches!(op, Op::Minus) && !matches_numerical(&l_ty_r) {
                     self.type_errors.push(TypeError::InvalidOperandError(e_pos));
                     return None;
                 }
