@@ -10,6 +10,17 @@ Very unfinished. Currently, the parser is nearly done and I am working on the an
 - There will be type inference.
 - There will be a single ADT declaration for declaring both product and sum types. Product types are like structs, while sum types are like enums in Rust. There is no distinction between product and sum types, and one can also create combined sum and product types.
 
+# Status
+
+| Feature                 | Parser        | Analyzer      |Interpreter  |Codegen     |
+| -------------           | ------------- |---------------|-------------|------------|
+| Basic control flow      |✔             |✔             |❌           |❌
+| ADTs                    |✔             |✔             |❌           |❌
+| Impors                    |❌             |❌             |❌           |❌
+| Pattern matching        |✔             |✔             |❌           |❌
+| Break, continue, return |✔             |✔             |❌           |❌
+| Generics                |❌             |❌             |❌           |❌
+
 # Syntax Examples
 I have not defined a formal grammar for this language yet, but the below examples should be enough to get an idea of the syntax.
 
