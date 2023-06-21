@@ -15,10 +15,11 @@ Very unfinished. Currently, the parser is nearly done and I am working on the an
 | Feature                 | Parser        | Analyzer      |Interpreter  |Codegen     |
 | -------------           | ------------- |---------------|-------------|------------|
 | Basic control flow      |✔             |✔             |❌           |❌
+| Functions      |✔             |✔             |❌           |❌
 | ADTs                    |✔             |✔             |❌           |❌
 | Imports                    |❌             |❌             |❌           |❌
 | Pattern matching        |✔             |✔             |❌           |❌
-| Break, continue, return |✔             |✔             |❌           |❌
+| Break, continue, return |❌             |❌             |❌           |❌
 | Generics                |❌             |❌             |❌           |❌
 
 # Syntax Examples
