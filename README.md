@@ -16,7 +16,7 @@ Very unfinished. Currently, the parser is nearly done and I am working on the an
 | -------------           | ------------- |---------------|-------------|------------|
 | Basic control flow      |✔             |✔             |❌           |❌
 | ADTs                    |✔             |✔             |❌           |❌
-| Impors                    |❌             |❌             |❌           |❌
+| Imports                    |❌             |❌             |❌           |❌
 | Pattern matching        |✔             |✔             |❌           |❌
 | Break, continue, return |✔             |✔             |❌           |❌
 | Generics                |❌             |❌             |❌           |❌
